@@ -6,7 +6,14 @@ on:
 jobs:
   repo-sync:
     runs-on: ubuntu-latest
+    env:
+      ENABLE_REPO_SYNC: ${{ vars.ENABLE_REPO_SYNC }}
     steps:
+      - name: Check if repo sync is enabled
+        if: env.ENABLE_REPO_SYNC != 'true'
+        run: |
+          echo "Repo sync is disabled. Skipping job."
+          exit 0
     - uses: actions/checkout@v4
       with:
         persist-credentials: false
