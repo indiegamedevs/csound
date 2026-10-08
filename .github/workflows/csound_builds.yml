@@ -33,7 +33,7 @@ jobs:
         id: tag
         uses: anothrNick/github-tag-action@1.75.0
         env:
-          PRERELEASE: true
+          PRERELEASE: ${{ github.ref != 'refs/heads/master' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DRY_RUN: true
 
