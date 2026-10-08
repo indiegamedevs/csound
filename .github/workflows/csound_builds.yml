@@ -667,7 +667,7 @@ jobs:
           ./build.sh
 
       - uses: actions/upload-artifact@v7.0.1
-        if: github.ref == 'refs/heads/develop'
+        if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master'
         with:
           name: Csound-For-iOS-${{env.CSOUND_VERSION}}
           path: platform/ios/Csound-For-iOS
