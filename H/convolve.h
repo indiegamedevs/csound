@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef _CONVOLVE_H_
@@ -39,12 +38,12 @@ typedef struct cvstruct
     int32        magic;                  /* magic number to identify */
     int32        headBsize;              /* byte offset from start to data */
     int32        dataBsize;              /* total number of bytes of data */
-    int32        dataFormat;             /* (int) format specifier */
-    MYFLT        samplingRate;           /* of original sample */
+    int32        dataFormat;             /* (int32_t) format specifier */
+    cs_float        samplingRate;           /* of original sample */
     int32        src_chnls;              /* no. of channels in source */
     int32        channel;                /* requested channel(s) */
     int32        Hlen;                   /* length of impulse reponse */
-    int32        Format;                 /* (int) how words are org'd in frm */
+    int32        Format;                 /* (int32_t) how words are org'd in frm */
     char         info[CVDFLTBYTS];       /* extendable byte area */
 } CVSTRUCT;
 

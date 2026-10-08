@@ -18,25 +18,25 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include <math.h>
 #include "emugens_common.h"
+#include "interlocks.h"
 
-#define LOG001 FL(-6.907755278982137)
-#define CALCSLOPE(next,prev,nsmps) ((next - prev)/nsmps)
+#define LOG001 (-6.907755278982137)
+#define CALCSLOPE(next,prev,nsmps) (((next) - (prev))/(nsmps))
 
 #define SAMPLE_ACCURATE \
     uint32_t n, nsmps = CS_KSMPS;                                    \
-    MYFLT *out = p->out;                                             \
+    cs_float* restrict out = p->out;                                    \
     uint32_t offset = p->h.insdshead->ksmps_offset;                  \
     uint32_t early = p->h.insdshead->ksmps_no_end;                   \
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));   \
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));   \
     if (UNLIKELY(early)) {                                           \
         nsmps -= early;                                              \
-        memset(&out[nsmps], '\0', early*sizeof(MYFLT));              \
+        memset(&out[nsmps], '\0', early*sizeof(cs_float));              \
     }                                                                \
 
 /* #define ZXP(z) (*(z)++) */
@@ -44,20 +44,19 @@
 #define register_deinit(csound, p, func) \
     csound->RegisterDeinitCallback(csound, p, (int32_t(*)(CSOUND*, void*))(func))
 
-static inline MYFLT
-zapgremlins(MYFLT x) {
-    MYFLT absx = fabs(x);
+static inline double
+zapgremlins(double x) {
+    double absx = fabs(x);
     // very small numbers fail the first test, eliminating denormalized numbers
     //    (zero also fails the first test, but that is OK since it returns
     // zero.)
     // very large numbers fail the second test, eliminating infinities
     // Not-a-Numbers fail both tests and are eliminated.
-    return (absx > (MYFLT)1e-15 && absx < (MYFLT)1e15) ? x : (MYFLT)0.0;
+    return (absx > (cs_float)1e-15 && absx < (cs_float)1e15) ? x : 0.0;
 }
 
-static inline MYFLT
-sc_wrap(MYFLT in, MYFLT lo, MYFLT hi) {
-    MYFLT range;
+static inline cs_float sc_wrap(cs_float in, cs_float lo, cs_float hi) {
+    cs_float range;
     // avoid the divide if possible
     if(in >= hi) {
         range = hi - lo;
@@ -74,6 +73,18 @@ sc_wrap(MYFLT in, MYFLT lo, MYFLT hi) {
 }
 
 
+/* Arguments must be local values without side effects. */
+#define SC_WRAP_FAST(value, lo, hi, range) do {                             \
+    (value) -= (range) * ((value) >= (hi));                                \
+    (value) += (range) * ((value) < (lo));                                 \
+    if (UNLIKELY((value) >= (hi) || (value) < (lo))) {                      \
+        if ((range) == FL(0.0))                                          \
+            (value) = (lo);                                              \
+        else                                                            \
+            (value) -= (range) * FLOOR(((value) - (lo)) / (range));        \
+    }                                                                   \
+} while (0)
+
 
 
 /*
@@ -82,7 +93,7 @@ sc_wrap(MYFLT in, MYFLT lo, MYFLT hi) {
 
   This is essentially the same as OnePole except that instead of
   supplying the coefficient directly, it is calculated from a 60 dB lag time.
-  This is the time required for the filter to converge to within 0.01%
+  This is the time required for the filter to converge to within 0.1%
   of a value. This is useful for smoothing out control signals.
 
   ksmooth = lag(kx, klagtime, [initialvalue])
@@ -95,10 +106,11 @@ sc_wrap(MYFLT in, MYFLT lo, MYFLT hi) {
 
 typedef struct {
     OPDS  h;
-    MYFLT *out, *in, *lagtime, *initial_value;
-    int started;
-    MYFLT lag, b1, y1;
-    MYFLT sr;
+    cs_float *out, *in, *lagtime, *initial_value;
+    int32_t started;
+    cs_float lag;
+    /* Keep slow updates in the state even when output samples are floats. */
+    double b1, y1, sr;
 } LAG0;
 
 static int32_t lag0_init_no_initial_value(CSOUND *csound, LAG0 *p) {
@@ -106,7 +118,7 @@ static int32_t lag0_init_no_initial_value(CSOUND *csound, LAG0 *p) {
     p->lag = -1;
     p->started = 0;
     p->b1 = FL(0.0);
-    p->sr = csound->GetKr(csound);
+    p->sr = CS_EKR;
     p->y1 = 0;
     return OK;
 }
@@ -117,21 +129,21 @@ static int32_t lag0_init_initial_value(CSOUND *csound, LAG0 *p) {
     p->started = 1;
     p->y1 = *(p->initial_value);
     p->b1 = FL(0.0);
-    p->sr = csound->GetKr(csound);
+    p->sr = CS_EKR;
     return OK;
 }
 
 
 static int32_t lag0k_next(CSOUND *csound, LAG0 *p) {
     IGN(csound);
-    MYFLT y1, b1;
-    MYFLT y0 = *p->in;
+    double y1, b1;
+    cs_float y0 = *p->in;
 
     if(UNLIKELY(em_isinfornan(y0))) {
         return PERFERRF("Non-finite or nan value detected: %f", y0);
     }
 
-    MYFLT lag = *p->lagtime;
+    cs_float lag = *p->lagtime;
 
     if(LIKELY(p->started))
         y1 = p->y1;
@@ -143,16 +155,17 @@ static int32_t lag0k_next(CSOUND *csound, LAG0 *p) {
     if (lag == p->lag) {
         b1 = p->b1;
         p->y1   = y1 = y0 + b1 * (y1 - y0);
-        *p->out = y1;
+        *p->out = (cs_float)y1;
     } else {
         // faust uses tau2pole = exp(-1 / (lag*sr))
         b1 = lag == FL(0.0) ? FL(0.0) : exp(LOG001 / (lag * p->sr));
-        *p->out = y0 + b1 * (y1 - y0);
+        y1 = y0 + b1 * (y1 - y0);
+        *p->out = (cs_float)y1;
         p->lag = lag;
         p->y1 = y1;
         p->b1 = b1;
     }
-    MYFLT out = *(p->out);
+    cs_float out = *(p->out);
     if (UNLIKELY(em_isnan(out))) {
         return PERFERR("Output should not be nan!");
     }
@@ -163,9 +176,9 @@ static int32_t laga_init_no_initial_value(CSOUND *csound, LAG0 *p) {
     IGN(csound);
     p->lag = -1;
     p->b1 = FL(0.0);
-    p->sr = csound->GetSr(csound);
+    p->sr = CS_ESR;
     p->started = 0;
-    p->y1 = -INF;
+    p->y1 = FL(-INF);
     return OK;
 }
 
@@ -173,7 +186,7 @@ static int32_t laga_init_initial_value(CSOUND *csound, LAG0 *p) {
     IGN(csound);
     p->lag = -1;
     p->b1 = FL(1.0);
-    p->sr = csound->GetSr(csound);
+    p->sr = CS_ESR;
     p->started = 1;
     p->y1 = *p->initial_value;
     return OK;
@@ -184,34 +197,37 @@ static int32_t laga_next(CSOUND *csound, LAG0 *p) {
 
     SAMPLE_ACCURATE
 
-    MYFLT *in = p->in;
-    MYFLT lag = *p->lagtime;
-    MYFLT y0, y1;
-    MYFLT b1 = p->b1;
+    if (UNLIKELY(offset >= nsmps))
+        return OK;
+
+    const cs_float* restrict in = p->in;
+    cs_float lag = *p->lagtime;
+    double y0, y1;
+    double b1 = p->b1;
 
     if(LIKELY(p->started))
         y1 = p->y1;
     else {
         p->started = 1;
-        y1 = in[0];
+        y1 = in[offset];
     }
 
     if (lag == p->lag) {
+        double c = 1.0 - b1;
         for (n=offset; n<nsmps; n++) {
-            y0 = in[n];
-            y1 = y0 + b1 * (y1 - y0);
-            out[n] = y1;
+            y1 = b1 * y1 + c * in[n];
+            out[n] = (cs_float)y1;
         }
     } else {
         // faust uses tau2pole = exp(-1 / (lag*sr))
         p->b1 = lag == FL(0.0) ? FL(0.0) : exp(LOG001 / (lag * p->sr));
-        MYFLT b1_slope = CALCSLOPE(p->b1, b1, nsmps);
+        double b1_slope = CALCSLOPE(p->b1, b1, nsmps - offset);
         p->lag = lag;
         for (n=offset; n<nsmps; n++) {
             b1 += b1_slope;
             y0  = in[n];
             y1  = y0 + b1 * (y1 - y0);
-            out[n] = y1;
+            out[n] = (cs_float)y1;
         }
     }
     p->y1 = y1;
@@ -233,14 +249,14 @@ static int32_t laga_next(CSOUND *csound, LAG0 *p) {
 
 typedef struct {
     OPDS h;
-    MYFLT *out, *in, *lagtimeU, *lagtimeD, *first;
-    MYFLT  lagu, lagd, b1u, b1d, y1;
-    MYFLT sr;
-    int started;
+    cs_float *out, *in, *lagtimeU, *lagtimeD, *first;
+    cs_float lagu, lagd;
+    double b1u, b1d, y1, sr;
+    int32_t started;
 } LagUD;
 
 
-static int32_t _lagud_init(CSOUND *csound, LagUD *p, int started) {
+static int32_t _lagud_init(CSOUND *csound, LagUD *p, int32_t started) {
     IGN(csound);
     p->lagu = -1;
     p->lagd = -1;
@@ -248,7 +264,7 @@ static int32_t _lagud_init(CSOUND *csound, LagUD *p, int started) {
     p->b1u = started ? FL(1.0) : FL(0.0);
     p->b1d = p->b1u;
     p->started = started;
-    p->sr = csound->GetKr(csound);
+    p->sr = CS_EKR;
     return OK;
 }
 
@@ -265,10 +281,10 @@ static int32_t lagud_init_no_initial_value(CSOUND *csound, LagUD *p) {
 
 static int
 lagud_k(CSOUND *csound, LagUD *p) {
-    MYFLT y0  = *p->in;
-    MYFLT lagu = *p->lagtimeU;
-    MYFLT lagd = *p->lagtimeD;
-    MYFLT y1;
+    cs_float y0  = *p->in;
+    cs_float lagu = *p->lagtimeU;
+    cs_float lagd = *p->lagtimeD;
+    double y1;
 
     if(UNLIKELY(em_isinfornan(y0))) {
         return PERFERRF("Non-finite value detected: %f", y0);
@@ -286,9 +302,9 @@ lagud_k(CSOUND *csound, LagUD *p) {
             p->y1 = y1 = y0 + p->b1u * (y1 - y0);
         else
             p->y1 = y1 = y0 + p->b1d * (y1 - y0);
-        *(p->out) = y1;
+        *(p->out) = (cs_float)y1;
     } else {
-        MYFLT sr = p->sr;
+        double sr = p->sr;
         // faust uses tau2pole = exp(-1 / (lag*sr)), sc uses log(0.01)
         p->b1u  = lagu == FL(0.0) ? FL(0.0) : exp(LOG001 / (lagu * sr));
         p->lagu = lagu;
@@ -298,7 +314,7 @@ lagud_k(CSOUND *csound, LagUD *p) {
             y1 = y0 + p->b1u * (y1 - y0);
         else
             y1 = y0 + p->b1d * (y1 - y0);
-        *(p->out) = y1;
+        *(p->out) = (cs_float)y1;
     }
     p->y1 = y1;
     return OK;
@@ -311,55 +327,54 @@ lagud_a(CSOUND *csound, LagUD *p) {
 
     SAMPLE_ACCURATE
 
-    MYFLT *in  = p->in;
-    MYFLT lagu = *p->lagtimeU;
-    MYFLT lagd = *p->lagtimeD;
-    // MYFLT y1   = p->y1;
-    MYFLT y1;
-    MYFLT b1u  = p->b1u;
-    MYFLT b1d  = p->b1d;
+    if (UNLIKELY(offset >= nsmps))
+        return OK;
 
-    if (UNLIKELY(offset)) memset(p->out, '\0', offset*sizeof(MYFLT));
-    if (UNLIKELY(early))  {
-      nsmps -= early;
-      memset(&p->out[nsmps], '\0', early*sizeof(MYFLT));
-    }
+    const cs_float* restrict in = p->in;
+    cs_float lagu = *p->lagtimeU;
+    cs_float lagd = *p->lagtimeD;
+    double y1;
+    double b1u = p->b1u;
+    double b1d = p->b1d;
+
     if(LIKELY(p->started))
         y1 = p->y1;
     else {
         p->started = 1;
-        y1 = in[0];
+        y1 = in[offset];
     }
 
-
     if ((lagu == p->lagu) && (lagd == p->lagd)) {
+        double cu = 1.0 - b1u;
+        double cd = 1.0 - b1d;
         for (n=offset; n<nsmps; n++) {
-            MYFLT y0 = in[n];
+            cs_float y0 = in[n];
             if (y0 > y1)
-                y1 = y0 + b1u * (y1 - y0);
+                y1 = b1u * y1 + cu * in[n];
+                // y1 = y0 + b1u * (y1 - y0);
             else
-                y1 = y0 + b1d * (y1 - y0);
-            out[n]= y1;
+                y1 = b1d * y1 + cd * in[n];
+                // y1 = y0 + b1d * (y1 - y0);
+            out[n] = (cs_float)y1;
         }
     } else {
-        MYFLT sr = csound->GetSr(csound);
+        double sr = CS_ESR;
         // faust uses tau2pole = exp(-1 / (lag*sr))
         p->b1u = lagu == FL(0.0) ? FL(0.0) : exp(LOG001 / (lagu * sr));
-        MYFLT b1u_slope = CALCSLOPE(p->b1u, b1u, nsmps);
+        double b1u_slope = CALCSLOPE(p->b1u, b1u, nsmps - offset);
         p->lagu = lagu;
         p->b1d  = lagd == FL(0.0) ? FL(0.0) : exp(LOG001 / (lagd * sr));
-        MYFLT b1d_slope = CALCSLOPE(p->b1d, b1d, nsmps);
+        double b1d_slope = CALCSLOPE(p->b1d, b1d, nsmps - offset);
         p->lagd = lagd;
         for (n=offset; n<nsmps; n++) {
-            MYFLT y0 = in[n];
-
+            cs_float y0 = in[n];
             b1u += b1u_slope;
             b1d += b1d_slope;
             if (y0 > y1)
                 y1 = y0 + b1u * (y1-y0);
             else
                 y1 = y0 + b1d * (y1-y0);
-            out[n] = y1;
+            out[n] = (cs_float)y1;
         }
     }
     p->y1 = zapgremlins(y1);
@@ -380,8 +395,8 @@ lagud_a(CSOUND *csound, LagUD *p) {
 
 typedef struct {
     OPDS h;
-    MYFLT *out, *in, *dur;
-    MYFLT  level, prevtrig;
+    cs_float *out, *in, *dur;
+    cs_float  level, prevtrig;
     long counter;
 } Trig;
 
@@ -390,24 +405,26 @@ trig_a(CSOUND *csound, Trig *p) {
 
     SAMPLE_ACCURATE
 
-    MYFLT *in = p->in;
-    MYFLT dur = *p->dur;
-    MYFLT sr = csound->GetSr(csound);
-    MYFLT prevtrig = p->prevtrig;
-    MYFLT level = p->level;
+    cs_float* restrict in = p->in;
+    cs_float dur = *p->dur;
+    cs_float sr = CS_ESR;
+    cs_float prevtrig = p->prevtrig;
+    cs_float level = p->level;
     unsigned long counter = p->counter;
 
     for(n=offset; n<nsmps; n++) {
-        MYFLT curtrig = in[n];
-        MYFLT zout;
-        if (counter > 0) {
-            zout = --counter ? level : FL(0.0);
+        cs_float curtrig = in[n];
+        cs_float zout;
+        if (counter > 0 && --counter > 0) {
+            zout = level;
         } else {
+            // hold is inactive or expires on this sample: a rising
+            // edge starts a new hold
             if (curtrig > FL(0.0) && prevtrig <= FL(0.0)) {
                 counter = (long)(dur * sr + FL(0.5));
                 if (counter < 1) counter = 1;
                 level = curtrig;
-                zout  = level;
+                zout = level;
             } else {
                 zout = FL(0.0);
             }
@@ -423,20 +440,22 @@ trig_a(CSOUND *csound, Trig *p) {
 
 static int
 trig_k(CSOUND *csound, Trig *p) {
-    MYFLT curtrig = *p->in;
-    MYFLT dur = *p->dur;
-    MYFLT kr = csound->GetKr(csound);
-    MYFLT prevtrig = p->prevtrig;
-    MYFLT level = p->level;
+    cs_float curtrig = *p->in;
+    cs_float dur = *p->dur;
+    cs_float kr = CS_EKR;
+    cs_float prevtrig = p->prevtrig;
+    cs_float level = p->level;
     uint64_t counter = p->counter;
-    if (counter > 0) {
-        *p->out = --counter ? level : FL(0.0);
+    if (counter > 0 && --counter > 0) {
+        *p->out = level;
     } else {
+        // same as in the audio variant, hold is either inactive or 
+        // expires now, so start new hold
         if (curtrig > FL(0.0) && prevtrig <= FL(0.0)) {
             counter = (int64_t)(dur * kr + FL(0.5));
             if (counter < 1)
                 counter = 1;
-            level   = curtrig;
+            level = curtrig;
             *p->out = level;
         } else {
             *p->out = FL(0.0);
@@ -449,10 +468,12 @@ trig_k(CSOUND *csound, Trig *p) {
 }
 
 static int32_t trig_init(CSOUND *csound, Trig *p) {
+    IGN(csound);
     p->counter = 0;
     p->prevtrig = FL(0.0);
     p->level = FL(0.0);
-    trig_k(csound, p);
+    /* Set the initial output without consuming the first performance trigger. */
+    *p->out = *p->in > FL(0.0) ? *p->in : FL(0.0);
     return OK;
 }
 
@@ -482,7 +503,7 @@ static int32_t trig_init(CSOUND *csound, Trig *p) {
    aindex phasor atrig, xrate, kstart, kend, kresetPos=kstart
    kindex phasor ktrig, krate, kstart, kend, kresetPos=kstart
 
-   trig:     When triggered, jump to resetPos (default: 0, equivalent to start).
+   trig:     When triggered, jump to resetPos (defaults to start).
    rate:     The amount of change per sample, i.e at a rate of 1 the value
              of each sample will be 1 greater than the preceding sample.
    start:    Start point of the ramp.
@@ -493,14 +514,20 @@ static int32_t trig_init(CSOUND *csound, Trig *p) {
 
 typedef struct {
     OPDS h;
-    MYFLT *out, *trig, *rate, *start, *end, *resetPos;
-    MYFLT level, previn;
+    cs_float *out, *trig, *rate, *start, *end, *resetPos;
+    cs_float level, previn, prevrate;
+    int32_t started;
 } Phasor;
 
 static int32_t phasor_init(CSOUND *csound, Phasor *p) {
     IGN(csound);
     p->previn = 0;
+    /* No sample interval precedes the first active sample. */
+    p->prevrate = 0;
     p->level = 0;
+    p->started = 0;
+    if (p->INOCOUNT < 5)
+        p->resetPos = p->start;
     return OK;
 }
 
@@ -510,27 +537,38 @@ phasor_a_aa(CSOUND *csound, Phasor *p) {
 
     SAMPLE_ACCURATE
 
-    MYFLT *in = p->trig;
-    MYFLT *rate = p->rate;
-    MYFLT start = *p->start;
-    MYFLT end = *p->end;
-    MYFLT resetPos = *p->resetPos;
-    MYFLT previn = p->previn;
-    MYFLT level = p->level;
+    if (UNLIKELY(offset >= nsmps))
+        return OK;
 
+    cs_float* restrict in = p->trig;
+    const cs_float *rate = p->rate;
+    const cs_float start = *p->start;
+    const cs_float end = *p->end;
+    const cs_float resetPos = *p->resetPos;
+    cs_float previn = p->previn;
+    cs_float prevrate = p->prevrate;
+    cs_float level = p->started ? p->level : start;
+    p->started = 1;
+    const cs_float range = end - start;
+
+    SC_WRAP_FAST(level, start, end, range);
     for(n=offset; n<nsmps; n++) {
-        MYFLT curin = in[n];
-        MYFLT zrate = rate[n];
+        cs_float curin = in[n];
+        cs_float zrate = rate[n];
         if (previn <= FL(0.0) && curin > FL(0.0)) {
-            MYFLT frac = FL(1) - previn/(curin-previn);
-            level = resetPos + frac * zrate;
+            /* Fraction of the previous interval after the zero crossing. */
+            cs_float frac = curin/(curin-previn);
+            level = resetPos + frac * prevrate;
+            SC_WRAP_FAST(level, start, end, range);
         }
         out[n] = level;
         level += zrate;
-        level = sc_wrap(level, start, end);
+        SC_WRAP_FAST(level, start, end, range);
         previn = curin;
+        prevrate = zrate;
     }
     p->previn = previn;
+    p->prevrate = prevrate;
     p->level  = level;
     return OK;
 }
@@ -541,26 +579,37 @@ phasor_a_ak(CSOUND *csound, Phasor *p) {
 
     SAMPLE_ACCURATE
 
-    MYFLT *in = p->trig;
-    MYFLT rate = *p->rate;
-    MYFLT start = *p->start;
-    MYFLT end = *p->end;
-    MYFLT resetPos = *p->resetPos;
-    MYFLT previn = p->previn;
-    MYFLT level = p->level;
+    if (UNLIKELY(offset >= nsmps))
+        return OK;
 
+    cs_float* restrict in = p->trig;
+    cs_float rate = *p->rate;
+    cs_float start = *p->start;
+    cs_float end = *p->end;
+    cs_float resetPos = *p->resetPos;
+    cs_float previn = p->previn;
+    cs_float prevrate = p->prevrate;
+    cs_float level = p->started ? p->level : start;
+    p->started = 1;
+    const cs_float range = end - start;
+
+    SC_WRAP_FAST(level, start, end, range);
     for(n=offset; n<nsmps; n++) {
-        MYFLT curin = in[n];
+        cs_float curin = in[n];
         if (previn <= FL(0.0) && curin > FL(0.0)) {
-            MYFLT frac = FL(1.0) - previn/(curin-previn);
-            level = resetPos + frac * rate;
+            /* Fraction of the previous interval after the zero crossing. */
+            cs_float frac = curin/(curin-previn);
+            level = resetPos + frac * prevrate;
+            SC_WRAP_FAST(level, start, end, range);
         }
         out[n] = level;
         level += rate;
-        level = sc_wrap(level, start, end);
+        SC_WRAP_FAST(level, start, end, range);
         previn = curin;
+        prevrate = rate;
     }
     p->previn = previn;
+    p->prevrate = prevrate;
     p->level = level;
     return OK;
 }
@@ -571,22 +620,28 @@ phasor_a_kk(CSOUND *csound, Phasor *p) {
 
     SAMPLE_ACCURATE
 
-    MYFLT curin    = *p->trig;
-    MYFLT rate     = *p->rate;
-    MYFLT start    = *p->start;
-    MYFLT end      = *p->end;
-    MYFLT resetPos = *p->resetPos;
-    MYFLT previn   = p->previn;
-    MYFLT level    = p->level;
-    int trig = (previn <= FL(0.0)) && (curin > FL(0.0));
-    MYFLT frac = FL(1.0) - previn/(curin-previn);
+    if (UNLIKELY(offset >= nsmps))
+        return OK;
 
+    cs_float curin    = *p->trig;
+    cs_float rate     = *p->rate;
+    cs_float start    = *p->start;
+    cs_float end      = *p->end;
+    cs_float resetPos = *p->resetPos;
+    cs_float previn   = p->previn;
+    cs_float level    = p->started ? p->level : start;
+    p->started = 1;
+    int32_t trig = (previn <= FL(0.0)) && (curin > FL(0.0));
+    if (trig)
+        level = resetPos;
+
+    const cs_float range = end - start;
+
+    SC_WRAP_FAST(level, start, end, range);
     for(n=offset; n<nsmps; n++) {
-        if (trig)
-            level = resetPos + frac * rate;
         out[n] = level;
         level += rate;
-        level  = sc_wrap(level, start, end);
+        SC_WRAP_FAST(level, start, end, range);
     }
     p->previn = curin;
     p->level  = level;
@@ -596,13 +651,14 @@ phasor_a_kk(CSOUND *csound, Phasor *p) {
 static int
 phasor_k_kk(CSOUND *csound, Phasor *p) {
     IGN(csound);
-    MYFLT curin    = *p->trig;
-    MYFLT rate     = *p->rate;
-    MYFLT start    = *p->start;
-    MYFLT end      = *p->end;
-    MYFLT resetPos = *p->resetPos;
-    MYFLT previn   = p->previn;
-    MYFLT level    = p->level;
+    cs_float curin    = *p->trig;
+    cs_float rate     = *p->rate;
+    cs_float start    = *p->start;
+    cs_float end      = *p->end;
+    cs_float resetPos = *p->resetPos;
+    cs_float previn   = p->previn;
+    cs_float level    = p->started ? p->level : start;
+    p->started = 1;
 
     if (UNLIKELY(previn <= FL(0.0) && curin > FL(0.0))) {
         level = resetPos;
@@ -618,72 +674,106 @@ phasor_k_kk(CSOUND *csound, Phasor *p) {
 #define S(x)    sizeof(x)
 
 static OENTRY scugens_localops[] = {
-    {"sc_lag",    S(LAG0),   0, 3, "k", "kk",
+    CSOUND_DEPRECATED_OPCODE("sc_lag", "lag", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+    {"sc_lag",    S(LAG0),   0,  "k", "kk",
+     (SUBR)lag0_init_no_initial_value, (SUBR)lag0k_next, NULL, NULL, 2},
+    CSOUND_DEPRECATED_OPCODE("sclag", "lag", ALIAS, "Deprecated alias documented in the manual; use the supported name.")
+    {"sclag",    S(LAG0),   _QQ,  "k", "kk",
+     (SUBR)lag0_init_no_initial_value, (SUBR)lag0k_next}, /* alias */
+    {"lag",    S(LAG0),   0,  "k", "kk",
      (SUBR)lag0_init_no_initial_value, (SUBR)lag0k_next},
-    {"lag",    S(LAG0),   0, 3, "k", "kk",
-     (SUBR)lag0_init_no_initial_value, (SUBR)lag0k_next},
 
-    {"sc_lag",    S(LAG0),   0, 3, "k", "kki",
+    {"sc_lag",    S(LAG0),   0,  "k", "kki",
+     (SUBR)lag0_init_initial_value, (SUBR)lag0k_next, NULL, NULL, 2},
+    {"sclag",    S(LAG0),   _QQ,  "k", "kki",
+     (SUBR)lag0_init_initial_value, (SUBR)lag0k_next}, /* alias */
+    {"lag",    S(LAG0),   0,  "k", "kki",
      (SUBR)lag0_init_initial_value, (SUBR)lag0k_next},
-    {"lag",    S(LAG0),   0, 3, "k", "kki",
-     (SUBR)lag0_init_initial_value, (SUBR)lag0k_next},
 
-    {"sc_lag",    S(LAG0),    0, 3, "a", "aki",
+    {"sc_lag",    S(LAG0),    0,  "a", "aki",
+     (SUBR)laga_init_initial_value, (SUBR)laga_next, NULL, NULL, 2},
+    {"sclag",    S(LAG0),    _QQ,  "a", "aki",
+     (SUBR)laga_init_initial_value, (SUBR)laga_next}, /* alias*/
+    {"lag",    S(LAG0),    0,  "a", "aki",
      (SUBR)laga_init_initial_value, (SUBR)laga_next},
-    {"lag",    S(LAG0),    0, 3, "a", "aki",
-     (SUBR)laga_init_initial_value, (SUBR)laga_next},
 
-    {"sc_lag",    S(LAG0),    0, 3, "a", "ak",
+    {"sc_lag",    S(LAG0),    0,  "a", "ak",
+     (SUBR)laga_init_no_initial_value, (SUBR)laga_next, NULL, NULL, 2},
+    {"sclag",    S(LAG0),    _QQ,  "a", "ak",
+     (SUBR)laga_init_no_initial_value, (SUBR)laga_next}, /* alias */
+    {"lag",    S(LAG0),    0,  "a", "ak",
      (SUBR)laga_init_no_initial_value, (SUBR)laga_next},
-    {"lag",    S(LAG0),    0, 3, "a", "ak",
-     (SUBR)laga_init_no_initial_value, (SUBR)laga_next},
 
-    {"sc_lagud",  S(LagUD),  0, 3, "k", "kkki",
+    CSOUND_DEPRECATED_OPCODE("sc_lagud", "lagud", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+    {"sc_lagud",  S(LagUD),  0,  "k", "kkki",
+     (SUBR)lagud_init_initial_value, (SUBR)lagud_k, NULL, NULL, 2 },
+    CSOUND_DEPRECATED_OPCODE("sclagud", "lagud", ALIAS, "Deprecated alias documented in the manual; use the supported name.")
+    {"sclagud",  S(LagUD),  _QQ,  "k", "kkki",
+     (SUBR)lagud_init_initial_value, (SUBR)lagud_k }, /* alias */
+    {"lagud",  S(LagUD),  0,  "k", "kkki",
      (SUBR)lagud_init_initial_value, (SUBR)lagud_k },
-    {"lagud",  S(LagUD),  0, 3, "k", "kkki",
-     (SUBR)lagud_init_initial_value, (SUBR)lagud_k },
 
-    {"sc_lagud",  S(LagUD),  0, 3, "a", "akki",
+    {"sc_lagud",  S(LagUD),  0,  "a", "akki",
+     (SUBR)lagud_init_initial_value, (SUBR)lagud_a, NULL, NULL, 2 },
+    {"sclagud",  S(LagUD),  _QQ,  "a", "akki",
+     (SUBR)lagud_init_initial_value, (SUBR)lagud_a }, /* alias */
+    {"lagud",  S(LagUD),  0,  "a", "akki",
      (SUBR)lagud_init_initial_value, (SUBR)lagud_a },
-    {"lagud",  S(LagUD),  0, 3, "a", "akki",
-     (SUBR)lagud_init_initial_value, (SUBR)lagud_a },
 
-    {"sc_lagud",  S(LagUD),  0, 3, "k", "kkk",
+    {"sc_lagud",  S(LagUD),  0,  "k", "kkk",
+     (SUBR)lagud_init_no_initial_value, (SUBR)lagud_k, NULL, NULL, 2 },
+    {"sclagud",  S(LagUD),  _QQ,  "k", "kkk",
+     (SUBR)lagud_init_no_initial_value, (SUBR)lagud_k }, /* alias */
+    {"lagud",  S(LagUD),  0,  "k", "kkk",
      (SUBR)lagud_init_no_initial_value, (SUBR)lagud_k },
-    {"lagud",  S(LagUD),  0, 3, "k", "kkk",
-     (SUBR)lagud_init_no_initial_value, (SUBR)lagud_k },
 
-    {"sc_lagud",  S(LagUD),  0, 3, "a", "akk",
+    {"sc_lagud",  S(LagUD),  0,  "a", "akk",
+     (SUBR)lagud_init_no_initial_value, (SUBR)lagud_a, NULL, NULL, 2 },
+    {"sclagud",  S(LagUD),  _QQ,  "a", "akk",
+     (SUBR)lagud_init_no_initial_value, (SUBR)lagud_a }, /* alias */
+    {"lagud",  S(LagUD),  0,  "a", "akk",
      (SUBR)lagud_init_no_initial_value, (SUBR)lagud_a },
-    {"lagud",  S(LagUD),  0, 3, "a", "akk",
-     (SUBR)lagud_init_no_initial_value, (SUBR)lagud_a },
 
 
-    {"sc_trig",   S(Trig),   0, 3, "k", "kk",    (SUBR)trig_init, (SUBR)trig_k },
-    {"trighold",   S(Trig),   0, 3, "k", "kk",    (SUBR)trig_init, (SUBR)trig_k },
+    CSOUND_DEPRECATED_OPCODE("sc_trig", "trighold", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+    {"sc_trig",   S(Trig),   0,  "k", "kk",    (SUBR)trig_init, (SUBR)trig_k, NULL, NULL, 2 },
+    CSOUND_DEPRECATED_OPCODE("sctrig", "trighold", ALIAS, "Deprecated alias documented in the manual; use the supported name.")
+    {"sctrig",   S(Trig),   _QQ,  "k", "kk",    (SUBR)trig_init, (SUBR)trig_k }, /* alias */
+    {"trighold",   S(Trig),   0,  "k", "kk",    (SUBR)trig_init, (SUBR)trig_k },
 
-    {"sc_trig",   S(Trig),   0, 3, "a", "ak",    (SUBR)trig_init, (SUBR)trig_a },
-    {"trighold",   S(Trig),   0, 3, "a", "ak",    (SUBR)trig_init, (SUBR)trig_a },
+    {"sc_trig",   S(Trig),   0,  "a", "ak",    (SUBR)trig_init, (SUBR)trig_a, NULL, NULL, 2 },
+    {"sctrig",   S(Trig),   _QQ,  "a", "ak",    (SUBR)trig_init, (SUBR)trig_a }, /* alias */
+    {"trighold",   S(Trig),   0,  "a", "ak",    (SUBR)trig_init, (SUBR)trig_a },
 
-    {"sc_phasor", S(Phasor), 0, 3, "k", "kkkkO",
+    CSOUND_DEPRECATED_OPCODE("sc_phasor", "trigphasor", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+    {"sc_phasor", S(Phasor), 0,  "k", "kkkkO",
+     (SUBR)phasor_init, (SUBR)phasor_k_kk, NULL, NULL, 2},
+    CSOUND_DEPRECATED_OPCODE("scphasor", "trigphasor", ALIAS, "Deprecated alias documented in the manual; use the supported name.")
+    {"scphasor", S(Phasor), _QQ,  "k", "kkkkO",
+     (SUBR)phasor_init, (SUBR)phasor_k_kk }, /* alias */
+    {"trigphasor", S(Phasor), 0,  "k", "kkkkO",
      (SUBR)phasor_init, (SUBR)phasor_k_kk },
-    {"trigphasor", S(Phasor), 0, 3, "k", "kkkkO",
-     (SUBR)phasor_init, (SUBR)phasor_k_kk },
 
-    {"sc_phasor", S(Phasor), 0, 3, "a", "akkkO",
+    {"sc_phasor", S(Phasor), 0,  "a", "akkkO",
+     (SUBR)phasor_init, (SUBR)phasor_a_ak, NULL, NULL, 2 },
+    {"scphasor", S(Phasor), _QQ,  "a", "akkkO",
+     (SUBR)phasor_init, (SUBR)phasor_a_ak }, /* alias */
+    {"trigphasor", S(Phasor), 0,  "a", "akkkO",
      (SUBR)phasor_init, (SUBR)phasor_a_ak },
-    {"trigphasor", S(Phasor), 0, 3, "a", "akkkO",
-     (SUBR)phasor_init, (SUBR)phasor_a_ak },
 
-    {"sc_phasor", S(Phasor), 0, 3, "a", "aakkO",
+    {"sc_phasor", S(Phasor), 0,  "a", "aakkO",
+     (SUBR)phasor_init, (SUBR)phasor_a_aa, NULL, NULL, 2 },
+    {"scphasor", S(Phasor), _QQ,  "a", "aakkO",
+     (SUBR)phasor_init, (SUBR)phasor_a_aa }, /* alias */
+    {"trigphasor", S(Phasor), 0,  "a", "aakkO",
      (SUBR)phasor_init, (SUBR)phasor_a_aa },
-    {"trigphasor", S(Phasor), 0, 3, "a", "aakkO",
-     (SUBR)phasor_init, (SUBR)phasor_a_aa },
 
-    {"sc_phasor", S(Phasor), 0, 3, "a", "kkkkO",
-     (SUBR)phasor_init, (SUBR)phasor_a_kk },
+    {"sc_phasor", S(Phasor), 0,  "a", "kkkkO",
+     (SUBR)phasor_init, (SUBR)phasor_a_kk, NULL, NULL, 2 },
+    {"scphasor", S(Phasor), _QQ,  "a", "kkkkO",
+     (SUBR)phasor_init, (SUBR)phasor_a_kk }, /* alias */
 
-    {"trigphasor", S(Phasor), 0, 3, "a", "kkkkO",
+    {"trigphasor", S(Phasor), 0,  "a", "kkkkO",
      (SUBR)phasor_init, (SUBR)phasor_a_kk }
 };
 

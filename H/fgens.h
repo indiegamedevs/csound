@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
                                                 /*      FGENS.H         */
 #ifndef CSOUND_FGENS_H
@@ -33,20 +32,25 @@
  * number is automatically assigned.
  * Returns zero on success.
  */
-int hfgens(CSOUND *csound, FUNC **ftpp, const EVTBLK *evtblkp, int mode);
+int32_t csoundFTCreate(CSOUND *csound, FUNC **ftpp, const EVTBLK *evtblkp, int32_t mode);
 
 /**
  * Allocates space for 'tableNum' with a length (not including the guard
- * point) of 'len' samples. The table data is not cleared to zero.
+ * point32_t) of 'len' samples. The table data is not cleared to zero.
  * Return value is zero on success.
  */
-int csoundFTAlloc(CSOUND *csound, int tableNum, int len);
+int32_t csoundFTAlloc(CSOUND *csound, int32_t tableNum, int32_t len);
 
 /**
  * Deletes a function table.
  * Return value is zero on success.
  */
-int csoundFTDelete(CSOUND *csound, int tableNum);
+int32_t csoundFTFree(CSOUND *csound, int32_t tableNum);
+/**
+ * Finds a function table.
+ * Returns a FUNC pointer or NULL if unsuccessful
+ */
+FUNC *csoundFTFind(CSOUND *csound, cs_float *argp);
 
 #endif  /* CSOUND_FGENS_H */
 

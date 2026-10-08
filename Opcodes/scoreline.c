@@ -17,43 +17,46 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
-//#include "csdl.h"
+
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
-//extern void csoundInputMessageInternal(CSOUND *, const char *);
+#endif
+
 
 typedef struct _inmess {
   OPDS h;
   STRINGDAT *SMess;
-  MYFLT *ktrig;
+  cs_float *ktrig;
 } INMESS;
 
 
 typedef struct _scorepos {
   OPDS h;
-  MYFLT *spos;
+  cs_float *spos;
 } SCOREPOS;
 
-int32_t messi(CSOUND *csound, INMESS *p)
+static int32_t messi(CSOUND *csound, INMESS *p)
 {
     csound->InputMessage(csound, (char *)p->SMess->data);
     return OK;
 }
 
-int32_t messk(CSOUND *csound, INMESS *p){
+static int32_t messk(CSOUND *csound, INMESS *p){
     if (*p->ktrig) csound->InputMessage(csound, (char *)p->SMess->data);
     return OK;
 }
 
-int32_t setscorepos(CSOUND *csound, SCOREPOS *p){
+static int32_t setscorepos(CSOUND *csound, SCOREPOS *p){
     csound->SetScoreOffsetSeconds(csound, *p->spos);
     return OK;
 }
 
-int32_t
+static int32_t
 rewindscore(CSOUND *csound, SCOREPOS *p){
     IGN(p);
     csound->RewindScore(csound);
@@ -62,10 +65,12 @@ rewindscore(CSOUND *csound, SCOREPOS *p){
 
 
 static OENTRY scoreline_localops[] = {
-  {"scoreline_i", sizeof(INMESS), 0, 1, "", "S", (SUBR)messi, NULL, NULL},
-  {"scoreline", sizeof(INMESS), 0, 2, "", "Sk", NULL, (SUBR)messk, NULL},
-  {"setscorepos", sizeof(SCOREPOS), 0, 1, "", "i", (SUBR)setscorepos, NULL, NULL},
-  {"rewindscore", sizeof(SCOREPOS), 0, 1, "", "", (SUBR)rewindscore, NULL, NULL}
+  CSOUND_DEPRECATED_OPCODE("scoreline_i", "scorelinei", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  {"scoreline_i", sizeof(INMESS), 0,  "", "S", (SUBR)messi, NULL, NULL, NULL, 2},
+  {"scorelinei", sizeof(INMESS), 0,  "", "S", (SUBR)messi, NULL, NULL}, /* alias */
+  {"scoreline", sizeof(INMESS), 0,  "", "Sk", NULL, (SUBR)messk, NULL},
+  {"setscorepos", sizeof(SCOREPOS), 0,  "", "i", (SUBR)setscorepos, NULL, NULL},
+  {"rewindscore", sizeof(SCOREPOS), 0,  "", "", (SUBR)rewindscore, NULL, NULL}
 };
 
 LINKAGE_BUILTIN(scoreline_localops)

@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 /* ***************************************************************** */
 /* ******** Program to import hetro files from tabular format. ***** */
@@ -32,9 +31,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
-#ifndef MYFLT
 #include "sysdep.h"
-#endif
 /*#include "hetro.h"*/
 #include "text.h"
 
@@ -117,10 +114,10 @@ static int32_t het_import(CSOUND *csound, int32_t argc, char **argv)
 
 int32_t het_import_init_(CSOUND *csound)
 {
-    int32_t retval = csound->AddUtility(csound, "het_import", het_import);
+    int32_t retval = (csound->GetUtility(csound))->AddUtility(csound, "het_import", het_import);
     if (!retval) {
       retval =
-        csound->SetUtilityDescription(csound, "het_import",
+        (csound->GetUtility(csound))->SetUtilityDescription(csound, "het_import",
                                       Str("translate text form to "
                                           "hetro analysis file"));
     }

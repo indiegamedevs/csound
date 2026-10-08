@@ -17,19 +17,20 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
                                                         /* clfilt.h */
+
+#pragma once
 
 #define CL_LIM 40  /* The limit on the number of biquadratic sections */
 
                                 /* Structure for biquadratic filter */
 typedef struct {
     OPDS    h;
-    MYFLT   *out, *in, *freq, *lohi, *npol, *kind, *pbr, *sbr, *reinit;
-    MYFLT   xnm1[CL_LIM], xnm2[CL_LIM], ynm1[CL_LIM], ynm2[CL_LIM],
+    cs_float   *out, *in, *freq, *lohi, *npol, *kind, *pbr, *sbr, *reinit;
+    cs_float   xnm1[CL_LIM], xnm2[CL_LIM], ynm1[CL_LIM], ynm2[CL_LIM],
       alpha[CL_LIM], beta[CL_LIM], odelta2[CL_LIM],
       b0[CL_LIM], b1[CL_LIM], b2[CL_LIM],
       a0[CL_LIM], a1[CL_LIM], a2[CL_LIM], prvfreq;

@@ -17,16 +17,19 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /********************************************/
 /* Controls                                 */
 /********************************************/
 
+#pragma once
+#ifdef BUILD_PLUGINS
 #include "csdl.h"
-
+#else
+#include "csoundCore.h"
+#endif
 typedef struct CONTROL_GLOBALS_ {
     CSOUND  *csound;
     char    cmd[100];
@@ -46,19 +49,19 @@ typedef struct CONTROL_GLOBALS_ {
 
 typedef struct {
     OPDS    h;
-    MYFLT   *kdest, *kcntl;
+    cs_float   *kdest, *kcntl;
     CONTROL_GLOBALS *p;
 } CNTRL;
 
 typedef struct {
     OPDS    h;
-    MYFLT   *kcntl, *val, *which;
+    cs_float   *kcntl, *val, *which;
     CONTROL_GLOBALS *p;
 } SCNTRL;
 
 typedef struct {
     OPDS    h;
-    MYFLT   *kcntl, *val;
+    cs_float   *kcntl, *val;
     CONTROL_GLOBALS *p;
 } TXTWIN;
 

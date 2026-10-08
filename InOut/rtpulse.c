@@ -17,8 +17,7 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with Csound; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-  02110-1301 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include <csdl.h>
@@ -38,14 +37,14 @@ typedef struct _pulse_globals {
   char iname[32];
 } pulse_globals;
 
-PUBLIC int csoundModuleCreate(CSOUND *csound)
+ int32_t csoundModuleCreate(CSOUND *csound)
 {
     pulse_globals *p;
-    int siz = 64;
-    OPARMS oparms;
-    csound->GetOParms(csound, &oparms);
+    int32_t siz = 64;
+   const OPARMS *O;
+    O = csound->GetOParms(csound) ;
 
-    if (oparms.msglevel & 0x400)
+    if (O->msglevel & 0x400)
       csound->Message(csound, Str("PulseAudio client RT IO module for Csound"
                                   "by Victor Lazzarini\n"));
 
@@ -61,7 +60,7 @@ PUBLIC int csoundModuleCreate(CSOUND *csound)
     csound->CreateConfigurationVariable(
         csound,"server", (void*) &(p->server[0]),
         CSOUNDCFG_STRING, 0, NULL, &siz,
-        "PulseAudio server name (default: default server)", NULL);
+        Str("PulseAudio server name (default: default server)"), NULL);
 
     strcpy(&(p->oname[0]), "csound-out");
 
@@ -70,36 +69,36 @@ PUBLIC int csoundModuleCreate(CSOUND *csound)
     csound->CreateConfigurationVariable(
         csound,"output_stream", (void*) &(p->oname[0]),
         CSOUNDCFG_STRING, 0, NULL, &siz,
-        "PulseAudio output stream name (default: csound-out)", NULL);
+        Str("PulseAudio output stream name (default: csound-out)"), NULL);
 
     strcpy(&(p->iname[0]), "csound-in");
 
     csound->CreateConfigurationVariable(
         csound,"input_stream", (void*) &(p->iname[0]),
         CSOUNDCFG_STRING, 0, NULL, &siz,
-        "PulseAudio input stream name (default: csound-in)", NULL);
+        Str("PulseAudio input stream name (default: csound-in)"), NULL);
 
 
     return 0;
 }
 
 
-PUBLIC int csoundModuleInfo(void)
+ int32_t csoundModuleInfo(void)
 {
-    return ((CS_APIVERSION << 16) + (CS_APISUBVER << 8) + (int) sizeof(MYFLT));
+  return CSOUND_MODULE_INFO;
 }
 
-static int pulse_playopen(CSOUND *csound, const csRtAudioParams *parm)
+static int32_t pulse_playopen(CSOUND *csound, const csRtAudioParams *parm)
 {
     pulse_params *pulse;
     pulse_globals *pg;
     const char *server;
     /* pa_buffer_attr attr */
-    int pulserror;
+    int32_t pulserror;
 
     pulse = (pulse_params *) csound->Malloc(csound, sizeof(pulse_params));
     *(csound->GetRtPlayUserData(csound))  = (void *) pulse;
-    pulse->spec.rate = csound->GetSr(csound);
+    pulse->spec.rate = parm->sampleRate;
     pulse->spec.channels = csound->GetNchnls(csound);
     pulse->spec.format = PA_SAMPLE_FLOAT32;
     pulse->buf =
@@ -155,13 +154,13 @@ static int pulse_playopen(CSOUND *csound, const csRtAudioParams *parm)
 
 }
 
-static void pulse_play(CSOUND *csound, const MYFLT *outbuf, int nbytes){
+static void pulse_play(CSOUND *csound, const cs_float *outbuf, int32_t nbytes){
 
-  int i, bufsiz, pulserror;
+  int32_t i, bufsiz, pulserror;
   float *buf;
   pulse_params *pulse = (pulse_params*) *(csound->GetRtPlayUserData(csound));
-  //MYFLT norm = csound->e0dbfs;
-  bufsiz = nbytes/sizeof(MYFLT);
+  //cs_float norm = csound->e0dbfs;
+  bufsiz = nbytes/sizeof(cs_float);
   buf = pulse->buf;
   for (i=0;i<bufsiz;i++) buf[i] = outbuf[i];
   if (UNLIKELY(pa_simple_write(pulse->ps, buf,
@@ -174,7 +173,7 @@ static void pulse_play(CSOUND *csound, const MYFLT *outbuf, int nbytes){
 
 static void pulse_close(CSOUND *csound)
 {
-    int error;
+    int32_t error;
     pulse_params *pulse = (pulse_params*) *(csound->GetRtPlayUserData(csound));
 
     if (pulse != NULL){
@@ -192,16 +191,16 @@ static void pulse_close(CSOUND *csound)
     csound->DestroyGlobalVariable(csound, "pulse_globals");
 }
 
-static int pulse_recopen(CSOUND *csound, const csRtAudioParams *parm)
+static int32_t pulse_recopen(CSOUND *csound, const csRtAudioParams *parm)
 {
     pulse_params *pulse;
     pulse_globals *pg;
     const char *server;
     /*pa_buffer_attr attr;*/
-    int pulserror;
+    int32_t pulserror;
     pulse = (pulse_params *) csound->Malloc(csound, sizeof(pulse_params));
     *(csound->GetRtRecordUserData(csound))  = (void *) pulse;
-    pulse->spec.rate = csound->GetSr(csound);
+    pulse->spec.rate = parm->sampleRate;
     pulse->spec.channels = csound->GetNchnls_i(csound);
     pulse->spec.format = PA_SAMPLE_FLOAT32;
     pulse->buf =
@@ -246,13 +245,13 @@ static int pulse_recopen(CSOUND *csound, const csRtAudioParams *parm)
 
 }
 
-static int pulse_record(CSOUND *csound, MYFLT *inbuf, int nbytes)
+static int32_t pulse_record(CSOUND *csound, cs_float *inbuf, int32_t nbytes)
 {
-    int i, bufsiz,pulserror;
+    int32_t i, bufsiz,pulserror;
     float *buf;
     pulse_params *pulse = (pulse_params*) *(csound->GetRtRecordUserData(csound)) ;
-    //MYFLT norm = csound->e0dbfs;
-    bufsiz = nbytes/sizeof(MYFLT);
+    //cs_float norm = csound->e0dbfs;
+    bufsiz = nbytes/sizeof(cs_float);
     buf = pulse->buf;
 
     if (UNLIKELY(pa_simple_read(pulse->ps, buf,
@@ -269,12 +268,12 @@ static int pulse_record(CSOUND *csound, MYFLT *inbuf, int nbytes)
 }
 
 
-PUBLIC int csoundModuleInit(CSOUND *csound)
+ int32_t csoundModuleInit(CSOUND *csound)
 {
     char    *s;
-    int     i;
+    int32_t     i;
     char    buf[9];
-    csound->module_list_add(csound, "pulse", "audio");
+    csound->ModuleListAdd(csound, "pulse", "audio");
     s = (char*) csound->QueryGlobalVariable(csound, "_RTAUDIO");
     i = 0;
     if (s != NULL) {
@@ -283,7 +282,7 @@ PUBLIC int csoundModuleInit(CSOUND *csound)
     }
     buf[i] = (char) 0;
     if (strcmp(&(buf[0]), "pulse") == 0) {
-      csound->Message(csound, Str("rtaudio: pulseaudio module enabled\n"));
+      csound->DebugMsg(csound, Str("rtaudio: pulseaudio module enabled\n"));
       csound->SetPlayopenCallback(csound, pulse_playopen);
       csound->SetRecopenCallback(csound, pulse_recopen);
       csound->SetRtplayCallback(csound, pulse_play);

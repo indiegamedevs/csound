@@ -18,8 +18,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 /* ***************************************************************** */
 /* ******** Program to import pvoc files from tabular format. ****** */
@@ -31,6 +30,7 @@
 
 #include "std_util.h"
 #include <stdio.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include "pvfileio.h"
@@ -40,7 +40,7 @@ static void pv_import_usage(CSOUND *csound)
     csound->Message(csound, "%s", Str("Usage: pv_import cstext_file pv_file\n"));
 }
 
-static float getnum(FILE* inf, char *term)
+static float getnum(FILE* inf, int32_t *term)
 {
     char buff[100];
     int32_t  cc;
@@ -74,13 +74,16 @@ static int32_t pv_import(CSOUND *csound, int32_t argc, char **argv)
       exit(1);
     }
     {
-      int32_t fmt1, fmt2, fmt3, fmt4, fmt5;
-      if (UNLIKELY(7!=fscanf(inf, "%d,%d,%d,%d,%u,%u,%d\n",
-             &fmt1, &fmt2, &fmt.nSamplesPerSec,
-                             &fmt.nAvgBytesPerSec, &fmt3, &fmt4, &fmt5))) {
+      uint32_t fmt1, fmt2, fmt3, fmt4, fmt5, sampleRate, byteRate;
+      if (UNLIKELY(7!=fscanf(inf,
+             "%" SCNu32 ",%" SCNu32 ",%" SCNu32 ",%" SCNu32
+             ",%" SCNu32 ",%" SCNu32 ",%" SCNu32 "\n",
+             &fmt1, &fmt2, &sampleRate, &byteRate, &fmt3, &fmt4, &fmt5))) {
         printf("ill formed inout\n");
         exit(1);
       }
+      fmt.nSamplesPerSec = sampleRate;
+      fmt.nAvgBytesPerSec = byteRate;
       fmt.wFormatTag = fmt1;
       fmt.nChannels = fmt2;
       fmt.nBlockAlign = fmt3;
@@ -136,7 +139,7 @@ static int32_t pv_import(CSOUND *csound, int32_t argc, char **argv)
       for (i=1;;i++) {
         uint32_t j;
         for (j=0; j<data.nAnalysisBins*2; j++) {
-          char term;
+          int32_t term;
           frame[j] = getnum(inf, &term);
           if (term==EOF) goto ending;
           if (feof(inf)) goto ending;
@@ -158,10 +161,10 @@ static int32_t pv_import(CSOUND *csound, int32_t argc, char **argv)
 
 int32_t pv_import_init_(CSOUND *csound)
 {
-    int32_t retval = csound->AddUtility(csound, "pv_import", pv_import);
+    int32_t retval = (csound->GetUtility(csound))->AddUtility(csound, "pv_import", pv_import);
     if (!retval) {
       retval =
-        csound->SetUtilityDescription(csound, "pv_import",
+        (csound->GetUtility(csound))->SetUtilityDescription(csound, "pv_import",
                                       Str("translate text form to "
                                           "PVOC analysis file"));
     }

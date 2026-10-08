@@ -15,6 +15,12 @@
 #include <process.h>
 #endif
 
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#else
+typedef int int32_t;
+#endif
+
 /* default Csound executable */
 #ifdef WIN32
 char    default_csnd[] = "csound32 -W";
@@ -40,9 +46,9 @@ char    **file_names = NULL;
 
 /* returns non-zero if the specified file name has .orc extension */
 
-int is_orc(char *s)
+static int is_orc(char *s)
 {
-    int n = strlen(s);
+    int n = (int32_t) strlen(s);
     if (n < 5) return 0;
     --n; if (s[n] != 'C' && s[n] != 'c') return 0;
     --n; if (s[n] != 'R' && s[n] != 'r') return 0;
@@ -53,9 +59,9 @@ int is_orc(char *s)
 
 /* returns non-zero if the specified file name has .sco extension */
 
-int is_sco(char *s)
+static int is_sco(char *s)
 {
-    int n = strlen(s);
+    int n = (int32_t) strlen(s);
     if (n < 5) return 0;
     --n; if (s[n] != 'O' && s[n] != 'o') return 0;
     --n; if (s[n] != 'C' && s[n] != 'c') return 0;
@@ -66,9 +72,9 @@ int is_sco(char *s)
 
 /* returns non-zero if the specified file name has .mid extension */
 
-int is_mid(char *s)
+static int is_mid(char *s)
 {
-    int n = strlen(s);
+    int n = (int32_t) strlen(s);
     if (n < 5) return 0;
     --n; if (s[n] != 'D' && s[n] != 'd') return 0;
     --n; if (s[n] != 'I' && s[n] != 'i') return 0;
@@ -79,9 +85,9 @@ int is_mid(char *s)
 
 /* returns non-zero if the specified file name has .csd extension */
 
-int is_csd(char *s)
+static int is_csd(char *s)
 {
-    int n = strlen(s);
+    int n = (int32_t) strlen(s);
     if (n < 5) return 0;
     --n; if (s[n] != 'D' && s[n] != 'd') return 0;
     --n; if (s[n] != 'S' && s[n] != 's') return 0;
@@ -92,7 +98,7 @@ int is_csd(char *s)
 
 /* split filename to directory and base name */
 
-void split_filename(char *fullname, char *dir, char *bas)
+static void split_filename(char *fullname, char *dir, char *bas)
 {
     int m;
     /* if no filename was given */
@@ -101,7 +107,7 @@ void split_filename(char *fullname, char *dir, char *bas)
       *bas = '\0';
       return;
     }
-    m = strlen(fullname);
+    m = (int32_t) strlen(fullname);
     while (--m >= 0 &&
            fullname[m] != '/' && fullname[m] != '\\' && fullname[m] != ':');
     /* directory name */
@@ -127,7 +133,7 @@ struct dirent *readdir(DIR*);
 int closedir(DIR*);
 #endif
 
-void create_file_list(void)
+static void create_file_list(void)
 {
     DIR             *d;
     struct dirent   *ep;
@@ -160,7 +166,7 @@ void create_file_list(void)
     closedir(d);
 }
 
-int chr_cmp(char a, char b)
+static int chr_cmp(char a, char b)
 {
     if (a == b) return 2;       /* characters are exactly the same */
     if (isupper(a)) a = tolower(a);
@@ -169,7 +175,7 @@ int chr_cmp(char a, char b)
     return 0;                   /* different characters */
 }
 
-int find_best_match(int file_type, char **s)
+static int find_best_match(int file_type, char **s)
 {
     int chars_match = 0, n = -1, m, i, j;
     *s = NULL;
@@ -216,7 +222,7 @@ int find_best_match(int file_type, char **s)
     return chars_match;
 }
 
-void find_files(char *name)
+static void find_files(char *name)
 {
     int   base_match = -1, n;
     int   orcmatch = 0, scomatch = 0, midmatch = 0, csdmatch = 0;
@@ -323,7 +329,7 @@ void find_files(char *name)
     }
 }
 
-void copy_options(char **dst, char *src)
+static void copy_options(char **dst, char *src)
 {
     int   i = -1;
     int   j = 0;        /* 1 if copying an option (2 if quoted) */
@@ -430,7 +436,7 @@ int main(int argc, char **argv)
     if (s != NULL)      /* get default setting from CSOUND, if available */
       strncpy(tmp, s, 255);
     for (i = (int) strlen(optlst); --i >= 0; ) {
-      sprintf(tmp2, "CSOUND_%c", optlst[i]);
+      snprintf(tmp2, 256, "CSOUND_%c", optlst[i]);
       s = getenv(tmp2);
       if (s != NULL) {
         strncpy(tmp, s, 255);
@@ -451,7 +457,7 @@ int main(int argc, char **argv)
     copy_options(&s2, s);
     /* any options from the environment, */
     for (i = 0; i < (int) strlen(optlst); i++) {
-      sprintf(tmp2, "CSFLAGS_%c", optlst[i]);
+      snprintf(tmp2, 256, "CSFLAGS_%c", optlst[i]);
       s = getenv(tmp2);
       if (s != NULL)
         copy_options(&s2, s);
@@ -489,7 +495,7 @@ int main(int argc, char **argv)
       if (csdname != NULL && strlen(csdname) > strlen(tmp))
         strcpy(tmp, csdname);
       /* set extension depending on file type */
-      i = strlen(tmp) - 4;
+      i = (int32_t) strlen(tmp) - 4;
       tmp[i] = '\0';
       if (strstr(cmdline, "\"-J\"") != NULL)                    /* IRCAM */
         strcat(tmp, ".sf");
@@ -548,11 +554,13 @@ int main(int argc, char **argv)
     if (midname != NULL) free(midname);
     if (csdname != NULL) free(csdname);
     /* execute command */
+#ifndef __wasm__
     if (execvp(tmp, cs_argv)) {
       fprintf(stderr, "cs: error executing Csound command: %s\n",
                       strerror(errno));
       exit(-1);
     }
+#endif
 
     return 0;
 }

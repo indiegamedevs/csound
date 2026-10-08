@@ -17,33 +17,32 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
-#include "csdl.h"
-
+#pragma once
+#include "stdopcod.h"
 #define POWER_BUFSIZE 1000
 
 typedef struct {
    OPDS h ;
 
-   MYFLT *aout ;      /* Declare output array first  */
-   MYFLT *ain ;       /* Input array   */
-   MYFLT *kthreshold ;/* sound level threshold */
-   MYFLT *icomp1 ;    /* Compression factors */
-   MYFLT *icomp2 ;
-   MYFLT *rtime ;         /* Raise/Fall times */
-   MYFLT *ftime ;
+   cs_float *aout ;      /* Declare output array first  */
+   cs_float *ain ;       /* Input array   */
+   cs_float *kthreshold ;/* sound level threshold */
+   cs_float *icomp1 ;    /* Compression factors */
+   cs_float *icomp2 ;
+   cs_float *rtime ;         /* Raise/Fall times */
+   cs_float *ftime ;
 
-   MYFLT rspeed ;
-   MYFLT fspeed ;
+   double rspeed ;
+   double fspeed ;
 
-   MYFLT gain ;
-   MYFLT power ;
-   MYFLT powerBuffer[POWER_BUFSIZE] ;
-   MYFLT *powerPos ;
-   MYFLT kthr;
+   double gain ;     /* Preserve per-sample steps during slow gain changes. */
+   double power ;    /* Limit cancellation drift in the running sum. */
+   cs_float powerBuffer[POWER_BUFSIZE] ;
+   cs_float *powerPos ;
+   cs_float kthr;
 
 } DAM ;
 

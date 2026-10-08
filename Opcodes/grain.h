@@ -17,22 +17,23 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*      Granular synthesizer designed and coded by Paris Smaragdis      */
 /*      Berklee College of Music Csound development team                */
 /*      Copyright (c) May 1994.  All rights reserved                    */
 
+#pragma once
+
 typedef struct {
     OPDS        h;
-    MYFLT       *sr, *xamp, *xlfr, *xdns, *kabnd, *kbnd, *kglen;
-    MYFLT       *igfn, *iefn, *imkglen, *opt;
-    MYFLT       gcount;
-    MYFLT       pr;
+    cs_float       *sr, *xamp, *xlfr, *xdns, *kabnd, *kbnd, *kglen;
+    cs_float       *igfn, *iefn, *imkglen, *opt;
+    cs_float       gcount;
+    cs_float       pr;
     AUXCH       aux;
-    MYFLT       *x, *y;
+    cs_float       *x, *y;
     FUNC        *gftp, *eftp;
     int16       dnsadv, ampadv, lfradv;
 } PGRA;

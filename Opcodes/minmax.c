@@ -26,41 +26,40 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 // #include "csdl.h"
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
+#endif
 #include "interlocks.h"
 #include <math.h>
 
 typedef struct {
     OPDS    h;
-    MYFLT   *accum, *ain;
+    cs_float   *accum, *ain;
 } MINMAXACCUM;
 
 typedef struct {
     OPDS    h;
-    MYFLT   *xout, *xin1, *xin2toN[VARGMAX-1];
+    cs_float   *xout, *xin1, *xin2toN[VARGMAX-1];
 } MINMAX;
 
-/* Which implementation is faster ?? */
+/* Accumulators may hold samples from other note instances. Leave samples
+   outside this note's active range unchanged. */
 static int32_t MaxAccumulate(CSOUND *csound, MINMAXACCUM *p)
 {
     IGN(csound);
-    MYFLT   cur;
+    cs_float   cur;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
-    uint32_t n, nsmps = CS_KSMPS;
-    MYFLT   *out = p->accum;
-    MYFLT   *in = p->ain;
+    uint32_t n, nsmps = CS_KSMPS - early;
+    cs_float   *out = p->accum;
+    cs_float   *in = p->ain;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
-    if (UNLIKELY(early)) {
-      nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
-    }
     for (n=offset; n<nsmps; n++) {
       cur = in[n];
       if (UNLIKELY(cur > out[n]))
@@ -73,18 +72,13 @@ static int32_t MaxAccumulate(CSOUND *csound, MINMAXACCUM *p)
 static int32_t MinAccumulate(CSOUND *csound, MINMAXACCUM *p)
 {
     IGN(csound);
-    MYFLT   cur;
+    cs_float   cur;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
-    uint32_t n, nsmps = CS_KSMPS;
-    MYFLT   *out = p->accum;
-    MYFLT   *in = p->ain;
+    uint32_t n, nsmps = CS_KSMPS - early;
+    cs_float   *out = p->accum;
+    cs_float   *in = p->ain;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
-    if (UNLIKELY(early)) {
-      nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
-    }
     for (n=offset; n<nsmps; n++) {
       cur = in[n];
       if (UNLIKELY(cur < out[n]))
@@ -100,16 +94,11 @@ static int32_t MaxAbsAccumulate(CSOUND *csound, MINMAXACCUM *p)
     IGN(csound);
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
-    uint32_t n, nsmps = CS_KSMPS;
-    MYFLT   *out = p->accum;
-    MYFLT   *in = p->ain;
-    MYFLT   inabs;
+    uint32_t n, nsmps = CS_KSMPS - early;
+    cs_float   *out = p->accum;
+    cs_float   *in = p->ain;
+    cs_float   inabs;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
-    if (UNLIKELY(early)) {
-      nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
-    }
     for (n=offset; n<nsmps; n++) {
       inabs = FABS(in[n]);
       if (UNLIKELY(inabs > out[n]))
@@ -124,16 +113,11 @@ static int32_t MinAbsAccumulate(CSOUND *csound, MINMAXACCUM *p)
     IGN(csound);
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
-    uint32_t n, nsmps = CS_KSMPS;
-    MYFLT   *out = p->accum;
-    MYFLT   *in = p->ain;
-    MYFLT   inabs;
+    uint32_t n, nsmps = CS_KSMPS - early;
+    cs_float   *out = p->accum;
+    cs_float   *in = p->ain;
+    cs_float   inabs;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
-    if (UNLIKELY(early)) {
-      nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
-    }
     for (n=offset; n<nsmps; n++) {
       inabs = FABS(in[n]);
       if (UNLIKELY(inabs < out[n]))
@@ -151,16 +135,16 @@ static int32_t Max_arate(CSOUND *csound, MINMAX *p)
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
-    int32_t     nargs = ((int) p->INOCOUNT) - 1;
-    MYFLT   *out = p->xout;
-    MYFLT   *in1 = p->xin1;
-    MYFLT   **in2 = p->xin2toN;
-    MYFLT   max, temp;
+    int32_t     nargs = ((int32_t) p->INOCOUNT) - 1;
+    cs_float   *out = p->xout;
+    cs_float   *in1 = p->xin1;
+    cs_float   **in2 = p->xin2toN;
+    cs_float   max, temp;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
       max = in1[n];
@@ -183,15 +167,15 @@ static int32_t Min_arate(CSOUND *csound, MINMAX *p)
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
     int32_t     nargs = ((int32_t) p->INOCOUNT) - 1;
-    MYFLT   *out = p->xout;
-    MYFLT   *in1 = p->xin1;
-    MYFLT   **in2 = p->xin2toN;
-    MYFLT   min, temp;
+    cs_float   *out = p->xout;
+    cs_float   *in1 = p->xin1;
+    cs_float   **in2 = p->xin2toN;
+    cs_float   min, temp;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
       min = in1[n];
@@ -215,15 +199,15 @@ static int32_t MaxAbs_arate(CSOUND *csound, MINMAX *p)
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
     int32_t     nargs = ((int32_t) p->INOCOUNT) - 1;
-    MYFLT   *out = p->xout;
-    MYFLT   *in1 = p->xin1;
-    MYFLT   **in2 = p->xin2toN;
-    MYFLT   max, temp;
+    cs_float   *out = p->xout;
+    cs_float   *in1 = p->xin1;
+    cs_float   **in2 = p->xin2toN;
+    cs_float   max, temp;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
       max = FABS(in1[n]);
@@ -246,15 +230,15 @@ static int32_t MinAbs_arate(CSOUND *csound, MINMAX *p)
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
     int32_t     nargs = ((int32_t) p->INOCOUNT) - 1;
-    MYFLT   *out = p->xout;
-    MYFLT   *in1 = p->xin1;
-    MYFLT   **in2 = p->xin2toN;
-    MYFLT   min, temp;
+    cs_float   *out = p->xout;
+    cs_float   *in1 = p->xin1;
+    cs_float   **in2 = p->xin2toN;
+    cs_float   min, temp;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
       min = FABS(in1[n]);
@@ -275,10 +259,10 @@ static int32_t Max_krate(CSOUND *csound, MINMAX *p)
     IGN(csound);
     int32_t     i;
     int32_t     nargs = ((int32_t) p->INOCOUNT) - 1;
-    MYFLT   *out = p->xout;
-    MYFLT   *in1 = p->xin1;
-    MYFLT   **in2 = p->xin2toN;
-    MYFLT   max, temp;
+    cs_float   *out = p->xout;
+    cs_float   *in1 = p->xin1;
+    cs_float   **in2 = p->xin2toN;
+    cs_float   max, temp;
 
     max = *in1;
     for (i = 0; i < nargs; ++i) {
@@ -296,10 +280,10 @@ static int32_t Min_krate(CSOUND *csound, MINMAX *p)
     IGN(csound);
     int32_t     i;
     int32_t     nargs = ((int32_t) p->INOCOUNT) - 1;
-    MYFLT   *out = p->xout;
-    MYFLT   *in1 = p->xin1;
-    MYFLT   **in2 = p->xin2toN;
-    MYFLT   min, temp;
+    cs_float   *out = p->xout;
+    cs_float   *in1 = p->xin1;
+    cs_float   **in2 = p->xin2toN;
+    cs_float   min, temp;
 
     min = *in1;
     for (i = 0; i < nargs; ++i) {
@@ -318,10 +302,10 @@ static int32_t MaxAbs_krate(CSOUND *csound, MINMAX *p)
     IGN(csound);
     int32_t     i;
     int32_t     nargs = ((int32_t) p->INOCOUNT) - 1;
-    MYFLT   *out = p->xout;
-    MYFLT   *in1 = p->xin1;
-    MYFLT   **in2 = p->xin2toN;
-    MYFLT   max, temp;
+    cs_float   *out = p->xout;
+    cs_float   *in1 = p->xin1;
+    cs_float   **in2 = p->xin2toN;
+    cs_float   max, temp;
 
     max = FABS(*in1);
     for (i = 0; i < nargs; ++i) {
@@ -339,10 +323,10 @@ static int32_t MinAbs_krate(CSOUND *csound, MINMAX *p)
     IGN(csound);
     int32_t     i;
     int32_t     nargs = ((int32_t) p->INOCOUNT) - 1;
-    MYFLT   *out = p->xout;
-    MYFLT   *in1 = p->xin1;
-    MYFLT   **in2 = p->xin2toN;
-    MYFLT   min, temp;
+    cs_float   *out = p->xout;
+    cs_float   *in1 = p->xin1;
+    cs_float   **in2 = p->xin2toN;
+    cs_float   min, temp;
 
     min = FABS(*in1);
     for (i = 0; i < nargs; ++i) {
@@ -360,22 +344,22 @@ static int32_t MinAbs_krate(CSOUND *csound, MINMAX *p)
 #define S(x)    sizeof(x)
 
 static OENTRY minmax_localops[] = {
-    {"maxaccum", S(MINMAXACCUM), WI, 2, "", "aa", NULL, (SUBR) MaxAccumulate},
-    {"minaccum", S(MINMAXACCUM), WI, 2, "", "aa", NULL, (SUBR) MinAccumulate},
-    {"maxabsaccum", S(MINMAXACCUM), WI, 2, "", "aa", NULL,
+    {"maxaccum", S(MINMAXACCUM), WI, "", "aa", NULL, (SUBR) MaxAccumulate},
+    {"minaccum", S(MINMAXACCUM), WI, "", "aa", NULL, (SUBR) MinAccumulate},
+    {"maxabsaccum", S(MINMAXACCUM), WI, "", "aa", NULL,
      (SUBR) MaxAbsAccumulate},
-    {"minabsaccum", S(MINMAXACCUM), WI, 2, "", "aa", NULL,
+    {"minabsaccum", S(MINMAXACCUM), WI, "", "aa", NULL,
      (SUBR) MinAbsAccumulate},
-    {"max.a", S(MINMAX), 0, 2, "a", "ay", NULL, (SUBR) Max_arate},
-    {"min.a", S(MINMAX), 0, 2, "a", "ay", NULL, (SUBR) Min_arate},
-    {"maxabs.a", S(MINMAX), 0, 2, "a", "ay", NULL, (SUBR) MaxAbs_arate},
-    {"minabs.a", S(MINMAX), 0, 2, "a", "ay", NULL, (SUBR) MinAbs_arate},
-    {"max.i", S(MINMAX), 0, 1, "i", "im", (SUBR) Max_krate, NULL, NULL},
-    {"max.k", S(MINMAX), 0, 2, "k", "kz", NULL, (SUBR) Max_krate, NULL},
-    {"min.i", S(MINMAX), 0, 1, "i", "im", (SUBR) Min_krate, NULL, NULL},
-    {"min.k", S(MINMAX), 0, 2, "k", "kz", NULL, (SUBR) Min_krate, NULL},
-    {"maxabs.k", S(MINMAX), 0, 2, "k", "kz", NULL, (SUBR) MaxAbs_krate, NULL},
-    {"minabs.k", S(MINMAX), 0, 2, "k", "kz", NULL, (SUBR) MinAbs_krate, NULL}
+    {"max.a", S(MINMAX), 0, "a", "ay", NULL, (SUBR) Max_arate},
+    {"min.a", S(MINMAX), 0, "a", "ay", NULL, (SUBR) Min_arate},
+    {"maxabs.a", S(MINMAX), 0, "a", "ay", NULL, (SUBR) MaxAbs_arate},
+    {"minabs.a", S(MINMAX), 0, "a", "ay", NULL, (SUBR) MinAbs_arate},
+    {"max.i", S(MINMAX), 0,  "i", "im", (SUBR) Max_krate, NULL, NULL},
+    {"max.k", S(MINMAX), 0, "k", "kz", NULL, (SUBR) Max_krate, NULL},
+    {"min.i", S(MINMAX), 0,  "i", "im", (SUBR) Min_krate, NULL, NULL},
+    {"min.k", S(MINMAX), 0, "k", "kz", NULL, (SUBR) Min_krate, NULL},
+    {"maxabs.k", S(MINMAX), 0, "k", "kz", NULL, (SUBR) MaxAbs_krate, NULL},
+    {"minabs.k", S(MINMAX), 0, "k", "kz", NULL, (SUBR) MinAbs_krate, NULL}
 };
 
 LINKAGE_BUILTIN(minmax_localops)

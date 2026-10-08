@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
  */
 #include <cmath>
 #include "OpcodeBase.hpp"
@@ -44,30 +43,30 @@ using namespace csound;
 class KAMPMIDID : public OpcodeBase<KAMPMIDID> {
 public:
     // Outputs.
-    MYFLT *kamplitude;
+    cs_float *kamplitude;
     // Inputs.
-    MYFLT *kvelocity;
-    MYFLT *irdb;
-    MYFLT *iuse0dbfs;
+    cs_float *kvelocity;
+    cs_float *irdb;
+    cs_float *iuse0dbfs;
     // State.
-    MYFLT ir;
-    MYFLT im;
-    MYFLT ib;
-    MYFLT onedrms;
-    MYFLT dbfs;
+    cs_float ir;
+    cs_float im;
+    cs_float ib;
+    cs_float onedrms;
+    cs_float dbfs;
     KAMPMIDID()
         : kamplitude(0), kvelocity(0), irdb(0), iuse0dbfs(0), ir(0), im(0), ib(0),
           onedrms(0), dbfs(1) {}
-    int init(CSOUND *csound) {
+    int32_t init(CSOUND *csound) {
         // Convert RMS power to amplitude (assuming a sinusoidal signal).
-        onedrms = MYFLT(1.0) / MYFLT(0.707);
+        onedrms = cs_float(1.0) / cs_float(0.707);
         // Convert dynamic range in decibels to RMS dynamic range.
-        ir = std::pow(MYFLT(10.0), *irdb / MYFLT(20.0));
+        ir = std::pow(cs_float(10.0), *irdb / cs_float(20.0));
         // Solve for coefficients of the linear conversion function given
         // RMS dynamic range.
-        ib = MYFLT(127.0) / (MYFLT(126.0) * std::sqrt(ir)) -
-             MYFLT(1.0) / MYFLT(126.0);
-        im = (MYFLT(1.0) - ib) / MYFLT(127.0);
+        ib = cs_float(127.0) / (cs_float(126.0) * std::sqrt(ir)) -
+             cs_float(1.0) / cs_float(126.0);
+        im = (cs_float(1.0) - ib) / cs_float(127.0);
         if (*iuse0dbfs == FL(0.0)) {
             dbfs = csound->Get0dBFS(csound);
         } else {
@@ -75,10 +74,10 @@ public:
         }
         return OK;
     }
-    int kontrol(CSOUND *csound) {
+    int32_t kontrol(CSOUND *csound) {
         IGN(csound);
         *kamplitude =
-            dbfs * std::pow((*kvelocity * im) + ib, MYFLT(2.0)) * onedrms;
+            dbfs * std::pow((*kvelocity * im) + ib, cs_float(2.0)) * onedrms;
         return OK;
     }
 };
@@ -86,40 +85,40 @@ public:
 class IAMPMIDID : public OpcodeBase<IAMPMIDID> {
 public:
     // Outputs.
-    MYFLT *iamplitude;
+    cs_float *iamplitude;
     // Inputs.
-    MYFLT *ivelocity;
-    MYFLT *irdb;
-    MYFLT *iuse0dbfs;
+    cs_float *ivelocity;
+    cs_float *irdb;
+    cs_float *iuse0dbfs;
     // State.
-    MYFLT ir;
-    MYFLT im;
-    MYFLT ib;
-    MYFLT onedrms;
-    MYFLT dbfs;
+    cs_float ir;
+    cs_float im;
+    cs_float ib;
+    cs_float onedrms;
+    cs_float dbfs;
     IAMPMIDID()
         : iamplitude(0), ivelocity(0), irdb(0), iuse0dbfs(0), ir(0), im(0), ib(0),
           onedrms(0), dbfs(1) {}
-    int init(CSOUND *csound) {
+    int32_t init(CSOUND *csound) {
         // Convert RMS power to amplitude (assuming a sinusoidal signal).
-        onedrms = MYFLT(1.0) / MYFLT(0.707);
+        onedrms = cs_float(1.0) / cs_float(0.707);
         // Convert dynamic range in decibels to RMS dynamic range.
-        ir = std::pow(MYFLT(10.0), *irdb / MYFLT(20.0));
+        ir = std::pow(cs_float(10.0), *irdb / cs_float(20.0));
         // Solve for coefficients of the linear conversion function given
         // RMS dynamic range.
-        ib = MYFLT(127.0) / (MYFLT(126.0) * std::sqrt(ir)) -
-             MYFLT(1.0) / MYFLT(126.0);
-        im = (MYFLT(1.0) - ib) / MYFLT(127.0);
+        ib = cs_float(127.0) / (cs_float(126.0) * std::sqrt(ir)) -
+             cs_float(1.0) / cs_float(126.0);
+        im = (cs_float(1.0) - ib) / cs_float(127.0);
         if (*iuse0dbfs == FL(0.0)) {
             dbfs = csound->Get0dBFS(csound);
         } else {
             dbfs = *iuse0dbfs;
         }
         *iamplitude =
-            dbfs * std::pow((*ivelocity * im) + ib, MYFLT(2.0)) * onedrms;
+            dbfs * std::pow((*ivelocity * im) + ib, cs_float(2.0)) * onedrms;
         return OK;
     }
-    int noteoff(CSOUND *) {
+    int32_t noteoff(CSOUND *) {
         return OK;
     }
 };
@@ -135,64 +134,64 @@ public:
  */
 class AMPMIDICURVE : public OpcodeBase<AMPMIDICURVE> {
 public:
-    MYFLT *k_gain;
-    MYFLT *k_midi_velocity;
-    MYFLT *k_dynamic_range;
-    MYFLT *k_exponent;
-    int init(CSOUND *csound) {
+    cs_float *k_gain;
+    cs_float *k_midi_velocity;
+    cs_float *k_dynamic_range;
+    cs_float *k_exponent;
+    int32_t init(CSOUND *csound) {
         *k_gain = *k_dynamic_range * std::pow(*k_midi_velocity / FL(127.), *k_exponent) + FL(1.) - *k_dynamic_range;
         return OK;
     }
-    int kontrol(CSOUND *csound) {
+    int32_t kontrol(CSOUND *csound) {
         *k_gain = *k_dynamic_range * std::pow(*k_midi_velocity / FL(127.), *k_exponent) + FL(1.) - *k_dynamic_range;
         return OK;
     }
 };
 
 extern "C" {
-    PUBLIC int csoundModuleInit_ampmidid(CSOUND *csound) {
-        int status = csound->AppendOpcode(
-                         csound, (char *)"ampmidid.k", sizeof(KAMPMIDID), 0, 3, (char *)"k",
+    PUBLIC int32_t csoundModuleInit_ampmidid(CSOUND *csound) {
+        int32_t status = csound->AppendOpcode(
+                         csound, (char *)"ampmidid.k", sizeof(KAMPMIDID), 0,  (char *)"k",
                          (char *)"kio",
-                         (int (*)(CSOUND *, void *))KAMPMIDID::init_,
-                         (int (*)(CSOUND *, void *))KAMPMIDID::kontrol_,
-                         (int (*)(CSOUND *, void *))0);
+                         (int32_t (*)(CSOUND *, void *))KAMPMIDID::init_,
+                         (int32_t (*)(CSOUND *, void *))KAMPMIDID::kontrol_,
+                         (int32_t (*)(CSOUND *, void *))0);
         status |= csound->AppendOpcode(
-                      csound, (char *)"ampmidid.i", sizeof(IAMPMIDID), 0, 1, (char *)"i",
+                      csound, (char *)"ampmidid.i", sizeof(IAMPMIDID), 0,  (char *)"i",
                       (char *)"iio",
-                      (int (*)(CSOUND *, void *))IAMPMIDID::init_,
-                      (int (*)(CSOUND *, void *))0,
-                      (int (*)(CSOUND *, void *))0);
-        status |= csound->AppendOpcode(csound, (char *)"ampmidid", 0xffff, 0, 0, 0, 0,
-                                       0, 0, 0);
+                      (int32_t (*)(CSOUND *, void *))IAMPMIDID::init_,
+                      (int32_t (*)(CSOUND *, void *))0,
+                      (int32_t (*)(CSOUND *, void *))0);
         status = csound->AppendOpcode(
-                     csound, (char *)"ampmidicurve.k", sizeof(AMPMIDICURVE), 0, 3, (char *)"k",
+                     csound, (char *)"ampmidicurve.k", sizeof(AMPMIDICURVE), 0,  (char *)"k",
                      (char *)"kkk",
-                     (int (*)(CSOUND *, void *))AMPMIDICURVE::init_,
-                     (int (*)(CSOUND *, void *))AMPMIDICURVE::kontrol_,
-                     (int (*)(CSOUND *, void *))0);
+                     (int32_t (*)(CSOUND *, void *))AMPMIDICURVE::init_,
+                     (int32_t (*)(CSOUND *, void *))AMPMIDICURVE::kontrol_,
+                     (int32_t (*)(CSOUND *, void *))0);
         status |= csound->AppendOpcode(
-                      csound, (char *)"ampmidicurve.i", sizeof(AMPMIDICURVE), 0, 1, (char *)"i",
+                      csound, (char *)"ampmidicurve.i", sizeof(AMPMIDICURVE), 0,  (char *)"i",
                       (char *)"iii",
-                      (int (*)(CSOUND *, void *))AMPMIDICURVE::init_,
-                      (int (*)(CSOUND *, void *))0,
-                      (int (*)(CSOUND *, void *))0);
-        status |= csound->AppendOpcode(csound, (char *)"ampmidicurve", 0xffff, 0, 0, 0, 0,
-                                       0, 0, 0);
+                      (int32_t (*)(CSOUND *, void *))AMPMIDICURVE::init_,
+                      (int32_t (*)(CSOUND *, void *))0,
+                      (int32_t (*)(CSOUND *, void *))0);
         return status;
     }
 
-#ifndef INIT_STATIC_MODULES
-    PUBLIC int csoundModuleCreate(CSOUND *csound) {
+#ifdef BUILD_PLUGINS
+    PUBLIC int32_t csoundModuleInfo(void) {
+      return CSOUND_MODULE_INFO;
+    }
+
+    PUBLIC int32_t csoundModuleCreate(CSOUND *csound) {
         IGN(csound);
         return 0;
     }
 
-    PUBLIC int csoundModuleInit(CSOUND *csound) {
+    PUBLIC int32_t csoundModuleInit(CSOUND *csound) {
         return csoundModuleInit_ampmidid(csound);
     }
 
-    PUBLIC int csoundModuleDestroy(CSOUND *csound) {
+    PUBLIC int32_t csoundModuleDestroy(CSOUND *csound) {
         IGN(csound);
         return 0;
     }

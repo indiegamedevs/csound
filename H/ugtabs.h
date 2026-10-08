@@ -17,43 +17,43 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
+#pragma once
 
 typedef struct _tabl {
   OPDS h;
-  MYFLT *sig, *ndx, *ftable, *mode, *offset, *wrap;
-  MYFLT mul;
+  cs_float *sig, *ndx, *ftable, *mode, *offset, *wrap;
+  cs_float mul;
   int32 np2;
   int32 len;
-  int iwrap;
+  int32_t iwrap;
   FUNC *ftp;
 } TABL;
 
 typedef struct _tlen {
   OPDS h;
-  MYFLT *ans, *ftable;
+  cs_float *ans, *ftable;
 } TLEN;
 
 typedef struct _tgp {
   OPDS h;
-  MYFLT  *ftable, *ftsrc;
+  cs_float  *ftable, *ftsrc;
 } TGP;
 
 typedef struct _tablmix {
   OPDS h;
-  MYFLT *tab, *off, *len, *tab1, *off1, *g1, *tab2, *off2, *g2;
+  cs_float *tab, *off, *len, *tab1, *off1, *g1, *tab2, *off2, *g2;
 } TABLMIX;
 
 typedef struct _tablra {
   OPDS h;
-  MYFLT *sig,*ftable,*strt,*off;
+  cs_float *sig,*ftable,*strt,*off;
 } TABLRA;
 
 typedef struct _tablwa {
   OPDS h;
-  MYFLT *strt,*ftable,*sig,*off,*skipinit;
-  MYFLT pos;
+  cs_float *strt,*ftable,*sig,*off,*skipinit;
+  cs_float pos;
 } TABLWA;

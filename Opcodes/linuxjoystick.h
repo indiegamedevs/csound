@@ -14,23 +14,24 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with this plugin; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-  02110-1301 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 
 */
+#pragma once
+
 #include <unistd.h>
 #include "csdl.h"
+
 #include "linux/joystick.h"
 
 typedef struct
 {
   OPDS h;
-  MYFLT *kresult, *kdev, *ktable;
+  cs_float *kresult, *kdev, *ktable;
   int32_t devFD;
-  uint32_t numk, numb;
+  uint8_t numk, numb;
   int32_t timeout, initme;
-  MYFLT table;
-  int32_t
-  dev;
+  cs_float table;
+  int32_t dev;
   FUNC *ftp;
 } LINUXJOYSTICK;

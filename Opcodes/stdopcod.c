@@ -17,13 +17,12 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "stdopcod.h"
 
-/* PUBLIC int32_t csoundModuleCreate(CSOUND *csound)
+/*  int32_t csoundModuleCreate(CSOUND *csound)
 {
     (void) csound;
     return 0;
@@ -33,22 +32,28 @@
 int32_t stdopc_ModuleInit(CSOUND *csound)
 {
     STDOPCOD_GLOBALS  *p;
-    int32_t               err = 0;
+    int32_t  err = 0;
+    p = (STDOPCOD_GLOBALS*) csound->QueryGlobalVariable(csound,
+                                                        "STDOPC_GLOBALS");
 
-    if (UNLIKELY(csound->stdOp_Env != NULL)) {
-      csound->ErrorMsg(csound, Str("stdopcod.c: error: globals already allocated"));
+    if(p == NULL) {
+      if(UNLIKELY(csound->CreateGlobalVariable(csound,
+                                             "STDOPC_GLOBALS", sizeof(STDOPCOD_GLOBALS))
+                            != CSOUND_SUCCESS)){
+      csound->ErrorMsg(csound,
+                       "%s", Str("stdopcod.c: could not allocate globals"));
       return CSOUND_ERROR;
     }
-    csound->stdOp_Env = csound->Calloc(csound, sizeof(STDOPCOD_GLOBALS));
+      p = (STDOPCOD_GLOBALS*) csound->QueryGlobalVariable(csound,
+                                                            "STDOPC_GLOBALS");
+    } else return CSOUND_SUCCESS;  // already initialised
 
-    p = (STDOPCOD_GLOBALS*) csound->stdOp_Env;
     p->csound = csound;
     /* fout.c */
     p->file_opened = (struct fileinTag*) NULL;
     p->file_num = -1;
-    /*p->buf = (MYFLT*) NULL;*/
+    /*p->buf = (cs_float*) NULL;*/
     /* ugnorman.c */
-    p->atsbufreadaddr = NULL;
     err |= ambicode_init_(csound);
     err |= bbcut_init_(csound);
     err |= biquad_init_(csound);
@@ -70,8 +75,6 @@ int32_t stdopc_ModuleInit(CSOUND *csound)
     err |= locsig_init_(csound);
     err |= lowpassr_init_(csound);
     err |= metro_init_(csound);
-    err |= midiops2_init_(csound);
-    err |= midiops3_init_(csound);
     err |= newfils_init_(csound);
     err |= nlfilt_init_(csound);
     err |= oscbnk_init_(csound);
@@ -93,13 +96,32 @@ int32_t stdopc_ModuleInit(CSOUND *csound)
     err |= ugsc_init_(csound);
     err |= wave_terrain_init_(csound);
     err |= wter2_init_(csound);
+    err |= dbap_init_(csound);
+
     return (err ? CSOUND_ERROR : CSOUND_SUCCESS);
 }
 
-/*
-PUBLIC int32_t csoundModuleInfo(void)
-{
-    return ((CS_APIVERSION << 16) + (CS_APISUBVER << 8) + (int32_t) sizeof(MYFLT));
-}
-*/
 
+#ifdef BUILD_PLUGINS
+  int32_t     csoundModuleCreate(CSOUND *csound)
+{
+    return 0;
+}
+
+  int32_t  csoundModuleInit(CSOUND *csound)
+{
+  return  stdopc_ModuleInit(csound);
+}
+
+
+ int32_t csoundModuleInfo(void)
+{
+  return CSOUND_MODULE_INFO;
+}
+
+  int32_t csoundModuleDestroy(CSOUND *csound)
+{
+    return 0;
+}
+
+#endif

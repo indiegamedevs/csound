@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include <stdio.h>
@@ -372,7 +371,7 @@ int main(int argc, char **argv)
         maxfreq = max(maxfreq,pprops[i]->maxfreq);
         minfreq = min(minfreq,pprops[i]->minfreq);
         maxamp = max(maxamp,pprops[i]->maxamp);
-        maxpoints = max(maxpoints,pprops[i]->numpoints);
+        maxpoints = max(maxpoints,(int32_t)pprops[i]->numpoints);
         n_partials++;
       }
     }

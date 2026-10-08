@@ -24,7 +24,7 @@
 **
 ** You should have received a copy of the GNU General Public License
 ** along with this program; if not, write to the Free Software
-** Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+** Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA.
 
 */
 
@@ -44,6 +44,7 @@
  *                    Q = quality factor (1 to 5: default = 3)
  */
 
+#include "csound_types.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -71,10 +72,10 @@
 #  define UNLIKELY(x)   x
 #endif
 
-static int rewrt_hdr = 0, heartbeat = 0, ringbell = 0, peaks = SF_TRUE;
-static int filetyp, outformat;
+static int32_t rewrt_hdr = 0, heartbeat = 0, ringbell = 0, peaks = SF_TRUE;
+static int32_t filetyp, outformat;
 static char* outfilename = NULL;
-static int block = 0;
+static int32_t block = 0;
 #define FIND(MSG)                                                   \
 {                                                                   \
     if (*s == '\0')                                                 \
@@ -85,8 +86,8 @@ static int block = 0;
 
 typedef struct {
   sf_count_t    frame;
-  double        time;
-  double        ratio;
+  cs_double        time;
+  cs_double        ratio;
 } WARP;
 
 static void usage(void);
@@ -103,8 +104,7 @@ static void heartbeater(void)
       break;
     case 3:
       {
-        int n;
-        fprintf(stderr, "%d%n", block, &n);
+        int32_t n = fprintf(stderr, "%d", block);
         while (n--) fprintf(stderr, "\010");
       }
       break;
@@ -115,7 +115,7 @@ static void heartbeater(void)
     return;
 }
 
-static char set_output_format(char c, char outformch, int *outformat)
+static char set_output_format(char c, char outformch, int32_t *outformat)
 {
     if (UNLIKELY(outformat)) {
       fprintf(stderr, Str("Sound format -%c has been overruled by -%c"),
@@ -163,11 +163,11 @@ static void dieu(char *s)
     usage();
 }
 
-int main(int argc, char **argv)
+int32_t main(int32_t argc, char **argv)
 {
     SF_INFO sfinfo;
 
-    double
+    cs_double
       P = 0.0,                  /* Rin / Rout */
       Rin = 0.0,                /* input sampling rate */
       Rout = 0.0;               /* output sample rate */
@@ -254,7 +254,7 @@ int main(int argc, char **argv)
             break;
           case 'H':
             if (isdigit(*s)) {
-              int n;
+              int32_t n;
               sscanf(s, "%d%n", &heartbeat, &n);
               s += n;
             }
@@ -273,12 +273,12 @@ int main(int argc, char **argv)
             break;
           case 'P':
             FIND(Str("No P argument"))
-            sscanf(s,"%lf", &P);
+            sscanf(s,"%" CS_DOUBLE_SCAN, &P);
             while (*++s);
             break;
           case 'r':
             FIND(Str("No r argument"))
-            sscanf(s,"%lf", &Rout);
+            sscanf(s,"%" CS_DOUBLE_SCAN, &Rout);
             while (*++s);
             break;
           case 'i':
@@ -366,7 +366,7 @@ int main(int argc, char **argv)
       }
       warp = (WARP*) calloc((tvlen+2), sizeof(WARP));
       for (i = 0; i < tvlen; i++) {
-        if (UNLIKELY(fscanf(tvfp, "%lf %lf", &warp[i].time, &warp[i].ratio) != 2)) {
+        if (UNLIKELY(fscanf(tvfp, "%" CS_DOUBLE_SCAN " %" CS_DOUBLE_SCAN, &warp[i].time, &warp[i].ratio) != 2)) {
           strncpy(err_msg, Str("srconv: too few x-y pairs "
                                 "in time-vary function file"), 299);
           fclose(tvfp);
@@ -405,7 +405,7 @@ int main(int argc, char **argv)
       else
         outfilename = "test";
     }
-    sfinfo.samplerate = (int) ((double) Rout + 0.5);
+    sfinfo.samplerate = (int) ((cs_double) Rout + 0.5);
     //printf("filetyp=%x outformat=%x\n", filetyp, outformat);
     sfinfo.format = filetyp | outformat;
     outf = sf_open(outfilename, SFM_WRITE, &sfinfo);
@@ -420,13 +420,13 @@ int main(int argc, char **argv)
     if (tvflg) {
       SRC_STATE *state;
       SRC_DATA  data;
-      int err;
-      int C         = (int)(0.01*Rin);
-      float* input  = (float*)calloc(sizeof(float), C*Chans);
-      float* output = (float*)calloc(sizeof(float), C*Chans);
-      int count     = 0, countin = 0;
-      double P0     = warp[0].ratio; /* Last ratio */
-      double P1     = warp[1].ratio; /* next ratio (at end of segment) */
+      int32_t err;
+      int32_t C         = (int)(0.01*Rin);
+      float* input  = (float*)calloc(C*Chans, sizeof(float));
+      float* output = (float*)calloc(C*Chans, sizeof(float));
+      int32_t count     = 0, countin = 0;
+      cs_double P0     = warp[0].ratio; /* Last ratio */
+      cs_double P1     = warp[1].ratio; /* next ratio (at end of segment) */
       sf_count_t CC = 0;             /* index through segment */
       sf_count_t N  = warp[1].frame; /* Length of segment */
       sf_count_t target = warp[1].frame; /* Count when at end */
@@ -435,7 +435,7 @@ int main(int argc, char **argv)
       state = src_new(Q, Chans, &err); /* initialise */
       if (UNLIKELY(state==NULL)) {
         fprintf(stderr,
-                "Error: failed to initialise SRC -- %s\n", src_strerror(err));
+                Str("Error: failed to initialise SRC -- %s\n"), src_strerror(err));
         sf_close(inf); sf_close(outf);
         usage();
         exit(1);
@@ -461,12 +461,12 @@ int main(int argc, char **argv)
           /*        tvnxt, countin, P0, P1, N, target); */
         }
         if (target==0) break;
-        data.src_ratio = P0+(P1-P0)*(double)CC/N;
+        data.src_ratio = P0+(P1-P0)*(cs_double)CC/N;
         /* printf("CC=%d, C=%d, ratio=%f P1=%f x/N=%f\n", */
         /*        CC, C, data.src_ratio, P1, (double)CC/N); */
         if (data.input_frames==0) {
-          int cn = C;
-          if (target-CC<C) { cn=target-CC; printf("only %d left to eos\n", cn); }
+          int32_t cn = C;
+          if (target-CC<C) { cn=(int32_t)(target-CC); printf("only %d left to eos\n", cn); }
           if (cn!= (data.input_frames = sf_readf_float(inf, input, cn)))
             data.end_of_input = SF_TRUE;
           data.data_in = input;
@@ -474,7 +474,7 @@ int main(int argc, char **argv)
         }
         err = src_process(state, &data);
         if (UNLIKELY(err)) {
-          fprintf(stderr, "srconv: error: %s\n", src_strerror(err));
+          fprintf(stderr, Str("srconv: error: %s\n"), src_strerror(err));
           sf_close(inf); sf_close(outf);
           exit(1);
         }
@@ -497,16 +497,16 @@ int main(int argc, char **argv)
     else {                      /* Simpler case with large steops */
       SRC_STATE *state;
       SRC_DATA  data;
-      int err;
-      int C = IBUF;
-      float* input = (float*)calloc(sizeof(float), C*Chans);
-      float* output = (float*)calloc(sizeof(float), C*Chans);
-      int count = 0;
+      int32_t err;
+      int32_t C = IBUF;
+      float* input = (float*)calloc(C*Chans, sizeof(float));
+      float* output = (float*)calloc(C*Chans, sizeof(float));
+      int32_t count = 0;
 
       state = src_new(Q, Chans, &err);
       if (UNLIKELY(state==NULL)) {
         fprintf(stderr,
-                "Error: failed to initialise SRC -- %s\n", src_strerror(err));
+                Str("Error: failed to initialise SRC -- %s\n"), src_strerror(err));
         sf_close(inf); sf_close(outf);
         usage();
         exit(1);
@@ -525,7 +525,7 @@ int main(int argc, char **argv)
         }
         err = src_process(state, &data);
         if (UNLIKELY(err)) {
-          fprintf(stderr, "srconv: error: %s\n", src_strerror(err));
+          fprintf(stderr, Str("srconv: error: %s\n"), src_strerror(err));
           sf_close(inf); sf_close(outf); free(input); free(output);
           exit(1);
         }
@@ -580,7 +580,7 @@ static const char *usage_txt[] = {
 
 static void usage(void)
 {
-    int i = -1;
+    int32_t i = -1;
 
     while (usage_txt[++i] != NULL)
       printf("%s\n", Str(usage_txt[i]));

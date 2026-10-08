@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"
@@ -29,7 +28,7 @@
 //(x >= FL(0.0) ? (int32_t)x : (int32_t)((double)x - 0.99999999))
 #define MYFLOOR(x) FLOOR(x)
 
-static inline unsigned int isPowerOfTwo (unsigned int x) {
+static inline uint32_t isPowerOfTwo (uint32_t x) {
   return (x > 0) && !(x & (x - 1)) ? 1 : 0;
 }
 
@@ -38,7 +37,7 @@ int32_t tabler_init(CSOUND *csound, TABL *p) {
     int32_t ndx, len;
     int32_t mask;
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->InitError(csound,
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -77,7 +76,7 @@ int32_t tabl_setup(CSOUND *csound, TABL *p) {
                               Str("table: index type inconsistent with output"));
       }
     }
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->InitError(csound,
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -120,19 +119,19 @@ int32_t tabler_audio(CSOUND *csound, TABL *p)
     IGN(csound);
     int32_t ndx, len = p->len, n, nsmps = CS_KSMPS;
     int32_t mask = p->ftp->lenmask;
-    MYFLT *sig = p->sig;
-    MYFLT *ndx_f = p->ndx;
-    MYFLT *func = p->ftp->ftable;
-    MYFLT offset = *p->offset;
-    MYFLT mul = p->mul;
+    cs_float *sig = p->sig;
+    cs_float *ndx_f = p->ndx;
+    cs_float *func = p->ftp->ftable;
+    cs_float offset = *p->offset;
+    cs_float mul = p->mul;
     int32_t iwrap = p->iwrap;
     uint32_t    koffset = p->h.insdshead->ksmps_offset;
     uint32_t    early  = p->h.insdshead->ksmps_no_end;
 
-    if (UNLIKELY(koffset)) memset(sig, '\0', koffset*sizeof(MYFLT));
+    if (UNLIKELY(koffset)) memset(sig, '\0', koffset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&sig[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&sig[nsmps], '\0', early*sizeof(cs_float));
     }
 
     for (n=koffset; n < nsmps; n++) {
@@ -157,10 +156,10 @@ int32_t tableir_init(CSOUND *csound, TABL *p) {
 
     int32_t ndx, len;
     int32_t mask;
-    MYFLT tmp, frac;
-    MYFLT x1, x2;
+    cs_float tmp, frac;
+    cs_float x1, x2;
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->InitError(csound,
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -198,8 +197,8 @@ int32_t tableir_init(CSOUND *csound, TABL *p) {
 int32_t tableir_kontrol(CSOUND *csound, TABL *p) {
     int32_t ndx, len = p->len;
     int32_t mask = p->ftp->lenmask;
-    MYFLT tmp, frac;
-    MYFLT x1, x2;
+    cs_float tmp, frac;
+    cs_float x1, x2;
     IGN(csound);
 
     tmp = (*p->ndx + *p->offset)*p->mul;
@@ -227,23 +226,23 @@ int32_t tableir_audio(CSOUND *csound, TABL *p)
     IGN(csound);
     int32_t ndx, len    = p->len, n, nsmps = CS_KSMPS;
     int32_t mask        = p->ftp->lenmask;
-    MYFLT *sig          = p->sig;
-    MYFLT *ndx_f        = p->ndx;
-    MYFLT *func         = p->ftp->ftable;
-    MYFLT offset        = *p->offset;
-    MYFLT mul           = p->mul, tmp, frac;
+    cs_float *sig          = p->sig;
+    cs_float *ndx_f        = p->ndx;
+    cs_float *func         = p->ftp->ftable;
+    cs_float offset        = *p->offset;
+    cs_float mul           = p->mul, tmp, frac;
     int32_t iwrap       = p->iwrap;
     uint32_t    koffset = p->h.insdshead->ksmps_offset;
     uint32_t    early   = p->h.insdshead->ksmps_no_end;
 
-    if (UNLIKELY(koffset)) memset(sig, '\0', koffset*sizeof(MYFLT));
+    if (UNLIKELY(koffset)) memset(sig, '\0', koffset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&sig[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&sig[nsmps], '\0', early*sizeof(cs_float));
     }
 
     for (n=koffset; n < nsmps; n++) {
-      MYFLT x1, x2;
+      cs_float x1, x2;
       tmp = (ndx_f[n] + offset)*mul;
       ndx = MYFLOOR(tmp);
       frac = tmp - ndx;
@@ -269,12 +268,12 @@ int32_t table3r_init(CSOUND *csound, TABL *p) {
 
     int32_t ndx, len;
     int32_t mask;
-    MYFLT   tmp, frac;
-    MYFLT   x0, x1, x2, x3;
-    MYFLT   fracub, fracsq, temp1;
-    MYFLT   *func;
+    cs_float   tmp, frac;
+    cs_float   x0, x1, x2, x3;
+    cs_float   fracub, fracsq, temp1;
+    cs_float   *func;
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->InitError(csound,
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -326,10 +325,10 @@ int32_t table3r_init(CSOUND *csound, TABL *p) {
 int32_t table3r_kontrol(CSOUND *csound, TABL *p) {
     int32_t ndx, len = p->len;
     int32_t mask = p->ftp->lenmask;
-    MYFLT tmp, frac;
-    MYFLT x0, x1, x2, x3;
-    MYFLT *func  =p->ftp->ftable;
-    MYFLT fracub, fracsq, temp1;
+    cs_float tmp, frac;
+    cs_float x0, x1, x2, x3;
+    cs_float *func  =p->ftp->ftable;
+    cs_float fracub, fracsq, temp1;
 
     IGN(csound);
 
@@ -371,23 +370,23 @@ int32_t table3r_audio(CSOUND *csound, TABL *p)
     IGN(csound);
     int32_t ndx, len = p->len, n, nsmps = CS_KSMPS;
     int32_t mask = p->ftp->lenmask;
-    MYFLT *sig = p->sig;
-    MYFLT *ndx_f = p->ndx;
-    MYFLT *func = p->ftp->ftable;
-    MYFLT offset = *p->offset;
-    MYFLT mul = p->mul, tmp, frac;
+    cs_float *sig = p->sig;
+    cs_float *ndx_f = p->ndx;
+    cs_float *func = p->ftp->ftable;
+    cs_float offset = *p->offset;
+    cs_float mul = p->mul, tmp, frac;
     int32_t iwrap = p->iwrap;
     uint32_t    koffset = p->h.insdshead->ksmps_offset;
     uint32_t    early  = p->h.insdshead->ksmps_no_end;
 
-    if (UNLIKELY(koffset)) memset(sig, '\0', koffset*sizeof(MYFLT));
+    if (UNLIKELY(koffset)) memset(sig, '\0', koffset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&sig[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&sig[nsmps], '\0', early*sizeof(cs_float));
     }
 
     for (n=koffset; n < nsmps; n++) {
-      MYFLT x0,x1,x2,x3,temp1,fracub,fracsq;
+      cs_float x0,x1,x2,x3,temp1,fracub,fracsq;
       tmp = (ndx_f[n] + offset)*mul;
       ndx = MYFLOOR(tmp);
       frac = tmp - ndx;
@@ -437,7 +436,7 @@ int32_t tablkt_setup(CSOUND *csound, TABL *p) {
 
 int32_t tablerkt_kontrol(CSOUND *csound, TABL *p) {
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -454,7 +453,7 @@ int32_t tablerkt_kontrol(CSOUND *csound, TABL *p) {
 
 int32_t tablerkt_audio(CSOUND *csound, TABL *p) {
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -470,7 +469,7 @@ int32_t tablerkt_audio(CSOUND *csound, TABL *p) {
 
 int32_t tableirkt_kontrol(CSOUND *csound, TABL *p) {
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -487,7 +486,7 @@ int32_t tableirkt_kontrol(CSOUND *csound, TABL *p) {
 int32_t tableirkt_audio(CSOUND *csound, TABL *p)
 {
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -502,7 +501,7 @@ int32_t tableirkt_audio(CSOUND *csound, TABL *p)
 
 int32_t table3rkt_kontrol(CSOUND *csound, TABL *p) {
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -517,7 +516,7 @@ int32_t table3rkt_kontrol(CSOUND *csound, TABL *p) {
 
 int32_t table3rkt_audio(CSOUND *csound, TABL *p) {
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -534,10 +533,10 @@ int32_t tablew_init(CSOUND *csound, TABL *p) {
 
     int32_t ndx, len;
     int32_t mask;
-    MYFLT *func;
+    cs_float *func;
     int32 iwrap = *p->wrap;
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->InitError(csound,
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -571,7 +570,7 @@ int32_t tablew_init(CSOUND *csound, TABL *p) {
 int32_t tablew_kontrol(CSOUND *csound, TABL *p) {
     int32_t ndx, len = p->len;
     int32_t mask = p->ftp->lenmask;
-    MYFLT *func = p->ftp->ftable;
+    cs_float *func = p->ftp->ftable;
     int32 iwrap = p->iwrap;
     IGN(csound);
 
@@ -595,11 +594,11 @@ int32_t tablew_audio(CSOUND *csound, TABL *p) {
     IGN(csound);
     int32_t ndx, len = p->len, n, nsmps = CS_KSMPS;
     int32_t mask = p->ftp->lenmask;
-    MYFLT *sig = p->sig;
-    MYFLT *ndx_f = p->ndx;
-    MYFLT *func = p->ftp->ftable;
-    MYFLT offset = *p->offset;
-    MYFLT mul = p->mul;
+    cs_float *sig = p->sig;
+    cs_float *ndx_f = p->ndx;
+    cs_float *func = p->ftp->ftable;
+    cs_float offset = *p->offset;
+    cs_float mul = p->mul;
     int32 iwrap = p->iwrap;
     uint32_t    koffset = p->h.insdshead->ksmps_offset;
     uint32_t    early  = p->h.insdshead->ksmps_no_end;
@@ -626,7 +625,7 @@ int32_t tablew_audio(CSOUND *csound, TABL *p) {
 
 int32_t tablewkt_kontrol(CSOUND *csound, TABL *p) {
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -643,7 +642,7 @@ int32_t tablewkt_kontrol(CSOUND *csound, TABL *p) {
 
 int32_t tablewkt_audio(CSOUND *csound, TABL *p) {
 
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -658,19 +657,19 @@ int32_t tablewkt_audio(CSOUND *csound, TABL *p) {
 
 int32_t table_length(CSOUND *csound, TLEN *p) {
     FUNC *ftp;
-    if (UNLIKELY((ftp = csound->FTnp2Find(csound, p->ftable)) == NULL)) {
+    if (UNLIKELY((ftp = csound->FTFind(csound, p->ftable)) == NULL)) {
       csound->Warning(csound, Str("table: could not find ftable %d"),
                       (int32_t) *p->ftable);
       *p->ans = FL(-1.0);
       return NOTOK;
     }
-    else *p->ans = (MYFLT) ftp->flen;
+    else *p->ans = (cs_float) ftp->flen;
     return OK;
 }
 
 int32_t table_gpw(CSOUND *csound, TGP *p) {
     FUNC *ftp;
-    if (UNLIKELY((ftp = csound->FTnp2Find(csound, p->ftable)) == NULL)) {
+    if (UNLIKELY((ftp = csound->FTFind(csound, p->ftable)) == NULL)) {
       csound->Warning(csound,
                       Str("table: could not find ftable %d"),
                       (int32_t) *p->ftable);
@@ -683,8 +682,8 @@ int32_t table_gpw(CSOUND *csound, TGP *p) {
 int32_t table_copy(CSOUND *csound, TGP *p) {
     FUNC *dest, *src;
     int32 len1, len2, i, rp;
-    if (UNLIKELY((dest = csound->FTnp2Find(csound, p->ftable)) == NULL ||
-                 (src = csound->FTnp2Find(csound, p->ftsrc)) == NULL)) {
+    if (UNLIKELY((dest = csound->FTFind(csound, p->ftable)) == NULL ||
+                 (src = csound->FTFind(csound, p->ftsrc)) == NULL)) {
       csound->Warning(csound,
                       Str("table: could not find ftables %d and/or %d"),
                       (int32_t) *p->ftable, (int32_t) *p->ftsrc);
@@ -703,24 +702,24 @@ int32_t table_mix(CSOUND *csound, TABLMIX *p) {
     int32 np2, np21, np22;
     FUNC *ftp, *ftp1, *ftp2;
     int32 len, len1, len2, flen;
-    MYFLT g1, g2, *func, *func1, *func2;
+    cs_float g1, g2, *func, *func1, *func2;
     int32 off, off1, off2;
 
-    if (UNLIKELY((ftp = csound->FTnp2Find(csound, p->tab)) == NULL)) {
+    if (UNLIKELY((ftp = csound->FTFind(csound, p->tab)) == NULL)) {
       csound->Warning(csound,
                       Str("table: could not find ftable %d"), (int32_t) *p->tab);
       return NOTOK;
     }
     np2 = isPowerOfTwo(ftp->flen) ? 0 : 1;
 
-    if (UNLIKELY((ftp1 = csound->FTnp2Find(csound, p->tab1)) == NULL)) {
+    if (UNLIKELY((ftp1 = csound->FTFind(csound, p->tab1)) == NULL)) {
       csound->Warning(csound,
                       Str("table: could not find ftable %d"), (int32_t) *p->tab1);
       return NOTOK;
     }
-    np21 = isPowerOfTwo(ftp->flen) ? 0 : 1;
+    np21 = isPowerOfTwo(ftp1->flen) ? 0 : 1;
 
-    if (UNLIKELY((ftp2 = csound->FTnp2Find(csound, p->tab2)) == NULL)) {
+    if (UNLIKELY((ftp2 = csound->FTFind(csound, p->tab2)) == NULL)) {
       csound->Warning(csound,
                       Str("table: could not find ftable %d"), (int32_t) *p->tab2);
       return NOTOK;
@@ -748,7 +747,7 @@ int32_t table_mix(CSOUND *csound, TABLMIX *p) {
         p2 = i+off2;
         if (np2) {
           while(p0 < 0) p0 += flen;
-          while(p0 >= len1) p0 -= flen;
+          while(p0 >= flen) p0 -= flen;
         }
         else p0 &= ftp->lenmask;
         if (np21) {
@@ -771,7 +770,7 @@ int32_t table_mix(CSOUND *csound, TABLMIX *p) {
         p2 = i+off2;
         if (np2) {
           while(p0 < 0) p0 += flen;
-          while(p0 >= len1) p0 -= flen;
+          while(p0 >= flen) p0 -= flen;
         }
         else p0 &= ftp->lenmask;
         if (np21) {
@@ -798,14 +797,14 @@ int32_t table_ra_set(CSOUND *csound, TABLRA *p) {
 
 int32_t table_ra(CSOUND *csound, TABLRA *p) {
     int32 pos, np2, nsmps, len, i;
-    MYFLT *sig= p->sig, *func;
+    cs_float *sig= p->sig, *func;
     int32_t mask;
     FUNC *ftp;
     uint32_t    koffset = p->h.insdshead->ksmps_offset;
     uint32_t    early  = p->h.insdshead->ksmps_no_end;
     nsmps = CS_KSMPS;
 
-    if (UNLIKELY((ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);
@@ -818,10 +817,10 @@ int32_t table_ra(CSOUND *csound, TABLRA *p) {
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not read negative pos %d"), pos);
 
-    if (UNLIKELY(koffset)) memset(sig, '\0', koffset*sizeof(MYFLT));
+    if (UNLIKELY(koffset)) memset(sig, '\0', koffset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&sig[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&sig[nsmps], '\0', early*sizeof(cs_float));
     }
 
     func = ftp->ftable;
@@ -845,14 +844,14 @@ int32_t table_wa_set(CSOUND *csound, TABLWA *p) {
 
 int32_t table_wa(CSOUND *csound, TABLWA *p) {
     int32 pos, np2, nsmps, len, i;
-    MYFLT *sig= p->sig, *func;
+    cs_float *sig= p->sig, *func;
     int32_t mask;
     FUNC *ftp;
     uint32_t    koffset = p->h.insdshead->ksmps_offset;
     uint32_t    early  = p->h.insdshead->ksmps_no_end;
     nsmps = CS_KSMPS;
 
-    if (UNLIKELY((ftp = csound->FTnp2Find(csound, p->ftable)) == NULL))
+    if (UNLIKELY((ftp = csound->FTFind(csound, p->ftable)) == NULL))
       return csound->PerfError(csound, &(p->h),
                                Str("table: could not find ftable %d"),
                                (int32_t) *p->ftable);

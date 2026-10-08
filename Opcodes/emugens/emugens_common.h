@@ -1,8 +1,11 @@
 #ifndef EMUGENS_COMMON_H
 #define EMUGENS_COMMON_H
 
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
-
+#endif
 
 #define INITERR(m) (csound->InitError(csound, "%s", m))
 #define INITERRF(fmt, ...) (csound->InitError(csound, fmt, __VA_ARGS__))
@@ -11,6 +14,17 @@
 #define MSGF(fmt, ...) (csound->Message(csound, fmt, __VA_ARGS__))
 #define PERFERR(m) (csound->PerfError(csound, &(p->h), "%s", m))
 #define PERFERRF(fmt, ...) (csound->PerfError(csound, &(p->h), fmt, __VA_ARGS__))
+
+/* Shared handlers report errors at the rate of their caller. */
+#define INITPERFERR(is_init, msg) \
+    ((is_init) ? INITERR(msg) : PERFERR(msg))
+#define INITPERFERRF(is_init, fmt, ...) \
+    ((is_init) ? INITERRF(fmt, __VA_ARGS__) : PERFERRF(fmt, __VA_ARGS__))
+
+#ifndef MAX
+#define MAX(a,b) ((a>b)?(a):(b))
+#define MIN(a,b) ((a>b)?(b):(a))
+#endif
 
 
 #define CHECKARR1D(arr)           \
@@ -30,7 +44,7 @@
 // array has not been initialized, so we don't need to check intialization
 // at k-time
 static inline void
-tabensure_init(CSOUND *csound, ARRAYDAT *p, int size)
+tabensure_init(CSOUND *csound, ARRAYDAT *p, int size, void *ctx)
 {
     size_t ss;
     if (p->dimensions==0) {
@@ -38,13 +52,14 @@ tabensure_init(CSOUND *csound, ARRAYDAT *p, int size)
         p->sizes = (int32_t*)csound->Malloc(csound, sizeof(int32_t));
     }
     if (p->data == NULL) {
-        CS_VARIABLE* var = p->arrayType->createVariable(csound, NULL);
+      CS_VARIABLE* var = csoundCreateVariableForType(
+        csound, p->arrayType, NULL, ctx);
         p->arrayMemberSize = var->memBlockSize;
         ss = p->arrayMemberSize*size;
-        p->data = (MYFLT*)csound->Calloc(csound, ss);
+        p->data = (cs_float*)csound->Calloc(csound, ss);
         p->allocated = ss;
     } else if( (ss = p->arrayMemberSize*size) > p->allocated) {
-        p->data = (MYFLT*) csound->ReAlloc(csound, p->data, ss);
+        p->data = (cs_float*) csound->ReAlloc(csound, p->data, ss);
         p->allocated = ss;
     }
     p->sizes[0] = size;
@@ -71,10 +86,10 @@ tabensure_init(CSOUND *csound, ARRAYDAT *p, int size)
 
 
 static inline
-int em_isnan(MYFLT d) {
+int em_isnan(cs_float d) {
   union {
     unsigned long long l;
-    double d;
+    cs_double d;
   } u;
   u.d=d;
   return (u.l==0x7FF8000000000000ll ||
@@ -83,20 +98,20 @@ int em_isnan(MYFLT d) {
 }
 
 static inline
-int em_isinf(MYFLT d) {
+int em_isinf(cs_float d) {
   union {
     unsigned long long l;
-    double d;
+    cs_double d;
   } u;
   u.d=d;
   return (u.l==0x7FF0000000000000ll?1:u.l==0xFFF0000000000000ll?-1:0);
 }
 
 static inline
-int em_isinfornan(MYFLT d) {
+int em_isinfornan(cs_float d) {
     union {
       unsigned long long l;
-      double d;
+      cs_double d;
     } u;
     u.d=d;
     return (u.l==0x7FF8000000000000ll ||

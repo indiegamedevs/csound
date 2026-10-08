@@ -17,18 +17,19 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*                                                      WINDIN.H        */
 
+#pragma once
+#include "cwindow.h"
 typedef struct
     {
     OPDS h;
-    MYFLT   *kxrslt, *kyrslt;
-    MYFLT   *iprd, *ixmin, *ixmax, *iymin, *iymax, *ixinit, *iyinit;
-    int     countdown, timcount;
-    XYINDAT w;          /* window specific data structure */
+    cs_float   *kxrslt, *kyrslt;
+    cs_float   *iprd, *ixmin, *ixmax, *iymin, *iymax, *ixinit, *iyinit;
+    int32_t     countdown, timcount;
+    struct xyindat_ w;          /* window specific data structure */
     } XYIN;
 

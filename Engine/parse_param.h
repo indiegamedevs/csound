@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 #ifndef __PARSE_PARAM_H
 #define __PARSE_PARAM_H
@@ -58,6 +57,10 @@ typedef struct parse_parm_s {
     int             xstrptr,xstrmax;
     uint64_t        iline;      /* Line number for start of instrument */
     uint64_t        ilocn;      /* and location */
+    uint32_t        first_column;
+    uint32_t        last_column;  
+    uint32_t        paren_depth;  /* suppress newlines inside parentheses */
+    int             xsubstr;    /* count for substr */
 } PARSE_PARM;
 
 void    cs_init_math_constants_macros(CSOUND*);
@@ -69,4 +72,6 @@ extern uint8_t file_to_int(CSOUND*, const char*);
 extern void csound_orcput_ilocn(void *, uint64_t, uint64_t);
 extern uint64_t csound_orcget_iline(void *);
 extern uint64_t csound_orcget_ilocn(void *);
+extern uint32_t csound_orcget_first_column(void *);
+extern uint32_t csound_orcget_last_column(void *);
 #endif

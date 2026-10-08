@@ -17,12 +17,12 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /* Console Csound using the Csound API. */
 #include "csound.h"
+#include "text.h"
 #include <stdio.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -38,9 +38,7 @@
 #ifdef LINUX
 extern int set_rt_priority(int argc, const char **argv);
 #endif
-
 extern int csoundErrCnt(CSOUND*);
-
 static FILE *logFile = NULL;
 
 static void msg_callback(CSOUND *csound,
@@ -68,172 +66,57 @@ static void msg_callback(CSOUND *csound,
 }
 
 static void nomsg_callback(CSOUND *csound,
+    /* Matches the message callback signature. va_list differs between platforms. */
+    /* NOLINTNEXTLINE(readability-non-const-parameter) */
   int attr, const char *format, va_list args){
   IGN(csound); IGN(attr);  IGN(format);  IGN(args);
 }
 
 
-#if defined(ANDROID) || (!defined(LINUX) && !defined(SGI) && \
-                         !defined(__HAIKU__) && !defined(__BEOS__) && \
-                         !defined(__MACH__) && !defined(__EMSCRIPTEN__))
-static char *signal_to_string(int sig)
-{
-    switch(sig) {
-#ifdef SIGHUP
-    case SIGHUP:
-      return "Hangup";
-#endif
-#ifdef SIGINT
-    case SIGINT:
-      return "Interrupt";
-#endif
-#ifdef SIGQUIT
-    case SIGQUIT:
-      return "Quit";
-#endif
-#ifdef SIGILL
-    case SIGILL:
-      return "Illegal instruction";
-#endif
-#ifdef SIGTRAP
-    case SIGTRAP:
-      return "Trace trap";
-#endif
-#ifdef SIGABRT
-    case SIGABRT:
-      return "Abort";
-#endif
-#ifdef SIGBUS
-    case SIGBUS:
-      return "BUS error";
-#endif
-#ifdef SIGFPE
-    case SIGFPE:
-      return "Floating-point exception";
-#endif
-#ifdef SIGUSR1
-    case SIGUSR1:
-      return "User-defined signal 1";
-#endif
-#ifdef SIGSEGV
-    case SIGSEGV:
-      return "Segmentation violation";
-#endif
-#ifdef SIGUSR2
-    case SIGUSR2:
-      return "User-defined signal 2";
-#endif
-#ifdef SIGPIPE
-    case SIGPIPE:
-      return "Broken pipe";
-#endif
-#ifdef SIGALRM
-    case SIGALRM:
-      return "Alarm clock";
-#endif
-#ifdef SIGTERM
-    case SIGTERM:
-      return "Termination";
-#endif
-#ifdef SIGSTKFLT
-    case SIGSTKFLT:
-      return "???";
-#endif
-#ifdef SIGCHLD
-    case SIGCHLD:
-      return "Child status has changed";
-#endif
-#ifdef SIGCONT
-    case SIGCONT:
-      return "Continue";
-#endif
-#ifdef SIGSTOP
-    case SIGSTOP:
-      return "Stop, unblockable";
-#endif
-#ifdef SIGTSTP
-    case SIGTSTP:
-      return "Keyboard stop";
-#endif
-#ifdef SIGTTIN
-    case SIGTTIN:
-      return "Background read from tty";
-#endif
-#ifdef SIGTTOU
-    case SIGTTOU:
-      return "Background write to tty";
-#endif
-#ifdef SIGURG
-    case SIGURG:
-      return "Urgent condition on socket ";
-#endif
-#ifdef SIGXCPU
-    case SIGXCPU:
-      return "CPU limit exceeded";
-#endif
-#ifdef SIGXFSZ
-    case SIGXFSZ:
-      return "File size limit exceeded ";
-#endif
-#ifdef SIGVTALRM
-    case SIGVTALRM:
-      return "Virtual alarm clock ";
-#endif
-#ifdef SIGPROF
-    case SIGPROF:
-      return "Profiling alarm clock";
-#endif
-#ifdef SIGWINCH
-    case SIGWINCH:
-      return "Window size change ";
-#endif
-#ifdef SIGIO
-    case SIGIO:
-      return "I/O now possible";
-#endif
-#ifdef SIGPWR
-    case SIGPWR:
-      return "Power failure restart";
-#endif
-    default:
-      return "???";
-    }
-}
-
-static void psignal(int sig, char *str)
-{
-    fprintf(stderr, "%s: %s\n", str, signal_to_string(sig));
-}
-#elif defined(__BEOS__)
+#if defined(__BEOS__)
 static void psignal(int sig, char *str)
 {
     fprintf(stderr, "%s: %s\n", str, strsignal(sig));
 }
+#elif defined(WIN32)
+static void psignal(int sig, char *str)
+{
+  if(sig == SIGINT)
+    fprintf(stderr, "%s: Interrupt\n", str);
+  else if(sig == SIGTERM)
+    fprintf(stderr, "%s: Terminate\n", str);
+  else
+    fprintf(stderr, "%s: received signal %d\n", str, sig);
+}
 #endif
 
-static CSOUND *_csound = NULL;
-static int _result = 0;
-static void signal_handler(int sig)
-{
+static volatile sig_atomic_t perf_flag = 1;
+static volatile sig_atomic_t received_signal = 0;
+
+static void signal_handler(int sig) {
 #if defined(SIGPIPE)
     if (sig == (int) SIGPIPE) {
+#ifndef __wasm__
       psignal(sig, "Csound ignoring SIGPIPE");
+#endif
       return;
     }
 #endif
-    psignal(sig, "\ncsound command");
     if ((sig == (int) SIGINT || sig == (int) SIGTERM)) {
-      if (_csound) {
-        csoundStop(_csound);
-        csoundDestroy(_csound);
+      if (received_signal) {
+        /* Second Ctrl-C: force-exit immediately */
+        _exit(1);
       }
-      //_result = -1;
-      if (logFile != NULL)
-        fclose(logFile);
-      exit(1);
-      //return;
+      received_signal = sig;
+      /* Let main() return from csoundPerformKsmps so it can render the
+         interrupt fade and shut down from a safe context. */
+      perf_flag = 0;
+      return;
     }
-    exit(1);
+#ifndef __wasm__
+    psignal(sig, "\ncsound command");
+#endif
+    _exit(1);
 }
 
 static const int sigs[] = {
@@ -251,50 +134,60 @@ static const int sigs[] = {
 
 static void install_signal_handler(void)
 {
-    unsigned int i;
-    for (i = 0; sigs[i] >= 0; i++) {
+unsigned int i;
+#if defined(__MACH__) || defined(__LINUX__)
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sigemptyset(&sa.sa_mask);
+  sa.sa_handler = &signal_handler;
+  for (i = 0; sigs[i] >= 0; i++)
+    sigaction(sigs[i], &sa, NULL);
+#else
+    for (i = 0; sigs[i] >= 0; i++)
       signal(sigs[i], signal_handler);
-    }
+#endif
 }
 
 int main(int argc, char **argv)
 {
     CSOUND  *csound;
     char    *fname = NULL;
-    int     i, result, errs, nomessages=0;
-#ifdef GNU_GETTEXT
-    const char* lang;
-#endif
+    int32_t  i, result, errs, nomessages=0;
+
     install_signal_handler();
     csoundInitialize(CSOUNDINIT_NO_SIGNAL_HANDLER);
 
     /* set stdout to non buffering if not outputing to console window */
-#if !defined(WIN32)
+#if !defined(WIN32) && !defined(IOS) && !defined(__wasi__)
     if (!isatty(fileno(stdout))) {
       setvbuf(stdout, (char*) NULL, _IONBF, 0);
     }
 #endif
+
 #ifdef GNU_GETTEXT
+    {
     /* We need to set the locale for the translations to work */
-    lang = csoundGetEnv(NULL, "CS_LANG");
+    const char* lang = csoundGetEnv(NULL, "CS_LANG");
     /* If set, use that. Otherwise use the system locale */
     if(lang == NULL)
         lang = setlocale(LC_MESSAGES, "");
     else
         lang = setlocale(LC_MESSAGES, lang);
-    /* Should we warn if we couldn't set the locale (lang == NULL)? */
-    /* If the strings for this binary are ever translated,
-     * the textdomain should be set here */
+    if(lang == NULL)
+      fprintf(stderr, "%s", Str("could not set the locale\n"));
+    }
 #endif
 
     /* Real-time scheduling on Linux by Istvan Varga (Jan 6 2002) */
 #ifdef LINUX
     if (set_rt_priority(argc, (const char **)argv) != 0)
       return -1;
-
 #endif
+
     /* open log file if specified */
     for (i = 1; i < argc; i++) {
+      if (strcmp(argv[i], "--") == 0)
+        break;
       if (strncmp(argv[i], "-O", 2) == 0 && (int) strlen(argv[i]) > 2)
         fname = argv[i] + 2;
       else if (strncmp(argv[i], "--logfile=", 10) == 0 &&
@@ -307,7 +200,7 @@ int main(int argc, char **argv)
       if (!strcmp(fname, "NULL") || !strcmp(fname, "null"))
                nomessages = 1;
       else if ((logFile = fopen(fname, "w")) == NULL) {
-        fprintf(stderr, "Error opening log file '%s': %s\n",
+        fprintf(stderr, Str("Error opening log file '%s': %s\n"),
                         fname, strerror(errno));
         return -1;
       }
@@ -319,28 +212,29 @@ int main(int argc, char **argv)
       csoundSetDefaultMessageCallback(nomsg_callback);
 
     /*  Create Csound. */
-    csound = csoundCreate(NULL);
-    _csound = csound;
-
+    csound = csoundCreate(NULL, NULL);
     /*  One complete performance cycle. */
-    result = csoundCompile(csound, argc, (const char **)argv);
-
-     if (!result) result = csoundPerform(csound);
-     //printf("**** result = %d\n", result);
+     result = csoundCompile(csound, argc, (const char **)argv);
+     if(!result) {
+      result = csoundStart(csound);
+      while (!result && perf_flag)
+        result = csoundPerformKsmps(csound);
+      if (!result && received_signal) {
+        uint32_t fadeFrames = (uint32_t) (csoundGetSr(csound) / 50.0);
+        result = csoundPerformOutputFade(csound, fadeFrames);
+      }
+     }
      errs = csoundErrCnt(csound);
-    /* delete Csound instance */
+     /* delete Csound instance */
      csoundDestroy(csound);
-     _csound = NULL;
+     if (received_signal) {
+#ifndef __wasm__
+       psignal((int) received_signal, "\ncsound command");
+#endif
+     }
     /* close log file */
     if (logFile != NULL)
       fclose(logFile);
 
-    if (result == 0 && _result != 0) result = _result;
-    //printf("csound returned with value: %d \n", result);
-#if 0
-    /* remove global configuration variables, if there are any */
-    csoundDeleteAllGlobalConfigurationVariables();
-#endif
-    //printf("**** return %d\n",  (result >= 0 ? errs : -result));
-    return (result >= 0 ? errs : -result);
+    return (received_signal ? 1 : (result >= 0 ? errs : -result));
 }

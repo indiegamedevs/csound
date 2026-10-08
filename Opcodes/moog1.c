@@ -17,17 +17,16 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
-// #include "csdl.h"
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
-#include "moog1.h"
+#endif
 
-extern void make_TwoZero(TwoZero *);
-extern void TwoZero_setZeroCoeffs(TwoZero *, MYFLT*);
-extern MYFLT TwoZero_tick(TwoZero *, MYFLT);
+#include "moog1.h"
 
 /********************************************/
 /*  Sweepable Formant (2-pole)              */
@@ -54,24 +53,28 @@ static void make_FormSwep(FormSwep *p)
     p->outputs[0]    = p->outputs[1] = FL(0.0);
 }
 
-/* void FormSwep_setFreqAndReson(FormSwep *p, MYFLT aFreq, MYFLT aReson) */
+/* void FormSwep_setFreqAndReson(FormSwep *p, cs_float aFreq, cs_float aReson) */
 /* { */
 /*     p->dirty = 0; */
 /*     p->reson = p->currentReson = aReson; */
 /*     p->freq = p->currentFreq = aFreq; */
 /*     p->poleCoeffs[1] = - (aReson * aReson); */
-/*     p->poleCoeffs[0] = 2.0*aReson*(MYFLT)cos((double)(twopi*aFreq/esr)); */
+/*     p->poleCoeffs[0] = 2.0*aReson*(cs_float)cos((double)(twopi*aFreq/esr)); */
 /* } */
 
-void FormSwep_setStates(FormSwep *p, MYFLT aFreq, MYFLT aReson, MYFLT aGain)
+static void FormSwep_setStates(OPDS *pp, FormSwep *p, cs_float aFreq,
+                               cs_float aReson, cs_float aGain)
 {
     p->dirty = 0;
     p->freq  = p->targetFreq  = p->currentFreq  = aFreq;
     p->reson = p->targetReson = p->currentReson = aReson;
     p->gain  = p->targetGain  = p->currentGain  = aGain;
+    p->poleCoeffs[1] = -(aReson * aReson);
+    p->poleCoeffs[0] = FL(2.0) * aReson *
+      COS(2 * pp->insdshead->pidsr * aFreq);
 }
 
-void FormSwep_setTargets(FormSwep *p, MYFLT aFreq, MYFLT aReson, MYFLT aGain)
+void FormSwep_setTargets(FormSwep *p, cs_float aFreq, cs_float aReson, cs_float aGain)
 {
     p->dirty = 1;
     p->targetFreq  = aFreq;
@@ -83,12 +86,13 @@ void FormSwep_setTargets(FormSwep *p, MYFLT aFreq, MYFLT aReson, MYFLT aGain)
     p->sweepState  = FL(0.0);
 }
 
-MYFLT FormSwep_tick(CSOUND *csound,
-                    FormSwep *p, MYFLT sample) /* Perform Filter Operation */
+cs_float FormSwep_tick(OPDS *pp,
+                    FormSwep *p, cs_float sample) /* Perform Filter Operation */
 {
-    MYFLT temp;
+    cs_float temp;
 
-    if (p->dirty) {
+    /* Keep the pending target when a zero rate pauses the sweep. */
+    if (p->dirty && p->sweepRate != FL(0.0)) {
       p->sweepState += p->sweepRate;
       if (p->sweepState>= FL(1.0)) {
         p->sweepState   = FL(1.0);
@@ -104,7 +108,8 @@ MYFLT FormSwep_tick(CSOUND *csound,
       }
       p->poleCoeffs[1] = - (p->currentReson * p->currentReson);
       p->poleCoeffs[0] = FL(2.0) * p->currentReson *
-        COS(csound->tpidsr * p->currentFreq);
+      COS(2*pp->insdshead->pidsr * p->currentFreq);
+
     }
 
     temp = p->currentGain * sample;
@@ -115,11 +120,11 @@ MYFLT FormSwep_tick(CSOUND *csound,
     return temp;
 }
 
-static MYFLT Samp_tick(Wave *p)
+static inline cs_float Samp_tick(Wave *p)
 {
     int32    temp, temp1;
-    MYFLT   temp_time, alpha;
-    MYFLT   lastOutput;
+    cs_float   temp_time, alpha;
+    cs_float   lastOutput;
 
     p->time += p->rate;                  /*  Update current time    */
     while (p->time >= p->wave->flen)     /*  Check for end of sound */
@@ -141,7 +146,7 @@ static MYFLT Samp_tick(Wave *p)
     temp1 = temp + 1;
     if (UNLIKELY(temp1==(int32_t)p->wave->flen)) temp1 = 0; /* Wrap!! */
     /*  fractional part of time address */
-    alpha = temp_time - (MYFLT)temp;
+    alpha = temp_time - (cs_float)temp;
     lastOutput = p->wave->ftable[temp];  /* Do linear interpolation */
     /* same as alpha*data[temp+1] + (1-alpha)data[temp] */
     lastOutput += (alpha * (p->wave->ftable[temp1] - lastOutput));
@@ -152,9 +157,9 @@ static MYFLT Samp_tick(Wave *p)
 int32_t Moog1set(CSOUND *csound, MOOG1 *p)
 {
     FUNC        *ftp;
-    MYFLT       tempCoeffs[2] = {FL(0.0),-FL(1.0)};
+    cs_float       tempCoeffs[2] = {FL(0.0),-FL(1.0)};
 
-    make_ADSR(&p->adsr);
+    make_ADSR(&p->adsr, CS_ESR);
     make_OnePole(&p->filter);
     make_TwoZero(&p->twozeroes[0]);
     TwoZero_setZeroCoeffs(&p->twozeroes[0], tempCoeffs);
@@ -163,46 +168,58 @@ int32_t Moog1set(CSOUND *csound, MOOG1 *p)
     make_FormSwep(&p->filters[0]);
     make_FormSwep(&p->filters[1]);
 
-    if (LIKELY((ftp = csound->FTnp2Finde(csound, p->iatt)) != NULL))
+    if (LIKELY((ftp = csound->FTFind(csound, p->iatt)) != NULL))
       p->attk.wave = ftp; /* mandpluk */
     else return NOTOK;
-    if (LIKELY((ftp = csound->FTnp2Finde(csound, p->ifn )) != NULL))
+    if (LIKELY((ftp = csound->FTFind(csound, p->ifn )) != NULL))
       p->loop.wave = ftp; /* impuls20 */
     else return NOTOK;
-    if (LIKELY((ftp = csound->FTnp2Finde(csound, p->ivfn)) != NULL))
+    if (LIKELY((ftp = csound->FTFind(csound, p->ivfn)) != NULL))
       p->vibr.wave = ftp; /* sinewave */
     else return NOTOK;
     p->attk.time = p->attk.phase = FL(0.0);
     p->loop.time = p->loop.phase = FL(0.0);
     p->vibr.time = p->vibr.phase = FL(0.0);
-    p->oldfilterQ = p->oldfilterRate = FL(0.0);
-    ADSR_setAllTimes(csound, &p->adsr, FL(0.001), FL(1.5), FL(0.6), FL(0.250));
+    /* Force the first control block to apply zero values too. */
+    p->oldfilterQ = p->oldfilterRate = -FL(1.0);
     ADSR_setAll(csound, &p->adsr, FL(0.05), FL(0.00003), FL(0.6), FL(0.0002));
     ADSR_keyOn(&p->adsr);
+    {
+      /* The release takes at most 1 / (0.0002 * 22050) seconds.
+         Allow 250 ms for it and the filter tail. */
+      int32_t relestim = (int32_t)ceil(FL(0.25) * CS_EKR);
+      if (relestim > p->h.insdshead->xtratim)
+        p->h.insdshead->xtratim = relestim;
+    }
     return OK;
 }
 
 int32_t Moog1(CSOUND *csound, MOOG1 *p)
 {
-    MYFLT       amp = *p->amp * AMP_RSCALE; /* Normalised */
-    MYFLT       *ar = p->ar;
+    cs_float       fullscale = AMP_SCALE;
+    cs_float       amp = *p->amp * (FL(1.0) / fullscale);
+    cs_float       *ar = p->ar;
     uint32_t    offset = p->h.insdshead->ksmps_offset;
     uint32_t    early  = p->h.insdshead->ksmps_no_end;
     uint32_t    n, nsmps = CS_KSMPS;
-    MYFLT       temp;
-    MYFLT       vib = *p->vibAmt;
+    cs_float       temp;
+    cs_float       vib = *p->vibAmt;
+
+    if (p->h.insdshead->relesing &&
+        p->adsr.state != RELEASE && p->adsr.state != CLEAR)
+      ADSR_keyOff(&p->adsr);
 
     p->baseFreq = *p->frequency;
-    p->attk.rate = p->baseFreq * FL(0.01) * p->attk.wave->flen * csound->onedsr;
-    p->loop.rate = p->baseFreq            * p->loop.wave->flen * csound->onedsr;
+    p->attk.rate = p->baseFreq * FL(0.01) * p->attk.wave->flen * CS_ONEDSR;
+    p->loop.rate = p->baseFreq            * p->loop.wave->flen * CS_ONEDSR;
     p->attackGain = amp * FL(0.5);
     p->loopGain = amp;
     if (*p->filterQ != p->oldfilterQ) {
       p->oldfilterQ = *p->filterQ;
       temp = p->oldfilterQ + FL(0.05);
-      FormSwep_setStates(&p->filters[0], FL(2000.0), temp,
+      FormSwep_setStates(&p->h, &p->filters[0], FL(2000.0), temp,
                          FL(2.0) * (FL(1.0) - temp));
-      FormSwep_setStates(&p->filters[1], FL(2000.0), temp,
+      FormSwep_setStates(&p->h, &p->filters[1], FL(2000.0), temp,
                          FL(2.0) * (FL(1.0) - temp));
       temp = p->oldfilterQ + FL(0.099);
       FormSwep_setTargets(&p->filters[0],   FL(0.0), temp,
@@ -215,23 +232,23 @@ int32_t Moog1(CSOUND *csound, MOOG1 *p)
       p->filters[0].sweepRate = p->oldfilterRate * RATE_NORM;
       p->filters[1].sweepRate = p->oldfilterRate * RATE_NORM;
     }
-    p->vibr.rate = *p->vibf * p->vibr.wave->flen * csound->onedsr;
+    p->vibr.rate = *p->vibf * p->vibr.wave->flen * CS_ONEDSR;
 
-    if (UNLIKELY(offset)) memset(ar, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(ar, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&ar[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&ar[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n = offset; n<nsmps; n++) {
-      MYFLT     temp;
-      MYFLT     output;
+      cs_float     temp;
+      cs_float     output;
       int32     itemp;
-      MYFLT     temp_time, alpha;
+      cs_float     temp_time, alpha;
 
       if (vib != FL(0.0)) {
         temp = vib * Samp_tick(&p->vibr);
         p->loop.rate = p->baseFreq * (FL(1.0) + temp) *
-                       (MYFLT)(p->loop.wave->flen) * csound->onedsr;
+                       (cs_float)(p->loop.wave->flen) * CS_ONEDSR;
       }
 
       p->attk.time += p->attk.rate;           /*  Update current time    */
@@ -240,12 +257,12 @@ int32_t Moog1(CSOUND *csound, MOOG1 *p)
                               p->attk.time, p->attk.rate);
 #endif
       temp_time = p->attk.time;
-      if (p->attk.time >= (MYFLT)p->attk.wave->flen)
+      if (p->attk.time >= (cs_float)p->attk.wave->flen)
         output = FL(0.0);                                    /* One shot */
       else {
         itemp = (int32) temp_time;   /*  Integer part of time address    */
                                      /*  fractional part of time address */
-        alpha = temp_time - (MYFLT)itemp;
+        alpha = temp_time - (cs_float)itemp;
 #ifdef DEBUG
         csound->Message(csound, "Attack: (%d, %d), alpha=%f\t",
                                 itemp, itemp+1, alpha);
@@ -278,7 +295,7 @@ int32_t Moog1(CSOUND *csound, MOOG1 *p)
 #ifdef DEBUG
       csound->Message(csound, "TwoZero0_tick: %f\n", output);
 #endif
-      output = FormSwep_tick(csound, &p->filters[0], output);
+      output = FormSwep_tick((OPDS *)p, &p->filters[0], output);
 #ifdef DEBUG
       csound->Message(csound, "Filters0_tick: %f\n", output);
 #endif
@@ -286,12 +303,11 @@ int32_t Moog1(CSOUND *csound, MOOG1 *p)
 #ifdef DEBUG
       csound->Message(csound, "TwoZero1_tick: %f\n", output);
 #endif
-      output = FormSwep_tick(csound, &p->filters[1], output);
+      output = FormSwep_tick((OPDS *)p, &p->filters[1], output);
 #ifdef DEBUG
       csound->Message(csound, "Filter2_tick: %f\n", output);
 #endif
-      ar[n] = output*AMP_SCALE*FL(8.0);
+      ar[n] = output*fullscale*FL(8.0);
     }
     return OK;
 }
-

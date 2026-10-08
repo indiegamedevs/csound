@@ -15,13 +15,16 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
  */
+
+#ifdef HAVE_DIRENT_H
 
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <locale>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -35,8 +38,8 @@ using namespace csound;
 /* this function will load all samples of supported types into function
    tables number 'index' and upwards.
    It return the number of samples loaded */
-int loadSamplesToTables(CSOUND *csound, int index, char *directory,
-                        int skiptime, int format, int channel);
+static int32_t loadSamplesToTables(CSOUND *csound, int32_t index, char *directory,
+                        cs_float skiptime, int32_t format, int32_t channel);
 
 //-----------------------------------------------------------------
 //      i-rate class
@@ -44,14 +47,14 @@ int loadSamplesToTables(CSOUND *csound, int index, char *directory,
 class iftsamplebank : public OpcodeBase<iftsamplebank> {
 public:
   // Outputs.
-  MYFLT *numberOfFiles;
+  cs_float *numberOfFiles;
   // Inputs.
   STRINGDAT *sDirectory;
-  MYFLT *index;
-  //    MYFLT* trigger;
-  MYFLT *skiptime;
-  MYFLT *format;
-  MYFLT *channel;
+  cs_float *index;
+  //    cs_float* trigger;
+  cs_float *skiptime;
+  cs_float *format;
+  cs_float *channel;
 
   iftsamplebank() {
     channel = 0;
@@ -64,14 +67,14 @@ public:
   }
 
   // init-pass
-  int init(CSOUND *csound) {
+  int32_t init(CSOUND *csound) {
 
     *numberOfFiles = loadSamplesToTables(
         csound, *index, (char *)sDirectory->data, *skiptime, *format, *channel);
     return OK;
   }
 
-  int noteoff(CSOUND *) { return OK; }
+  int32_t noteoff(CSOUND *) { return OK; }
 };
 
 //-----------------------------------------------------------------
@@ -80,15 +83,15 @@ public:
 class kftsamplebank : public OpcodeBase<kftsamplebank> {
 public:
   // Outputs.
-  MYFLT *numberOfFiles;
+  cs_float *numberOfFiles;
   // Inputs.
   STRINGDAT *sDirectory;
-  MYFLT *index;
-  MYFLT *trigger;
-  MYFLT *skiptime;
-  MYFLT *format;
-  MYFLT *channel;
-  int internalCounter;
+  cs_float *index;
+  cs_float *trigger;
+  cs_float *skiptime;
+  cs_float *format;
+  cs_float *channel;
+  int32_t internalCounter;
   kftsamplebank() : internalCounter(0) {
     channel = 0;
     index = 0;
@@ -99,24 +102,22 @@ public:
   }
 
   // init-pass
-  int init(CSOUND *csound) {
+  int32_t init(CSOUND *csound) {
     IGN(csound);
     *numberOfFiles =
           loadSamplesToTables(csound, *index, (char *)sDirectory->data,
                               *skiptime, *format, *channel);
-    *trigger = 0;
     return OK;
   }
 
-  int noteoff(CSOUND *) { return OK; }
+  int32_t noteoff(CSOUND *) { return OK; }
 
-  int kontrol(CSOUND *csound) {
-    // if directry changes update tables..
+  int32_t kontrol(CSOUND *csound) {
+    // The trigger is an input: other opcodes may share it.
     if (*trigger == 1) {
       *numberOfFiles =
           loadSamplesToTables(csound, *index, (char *)sDirectory->data,
                               *skiptime, *format, *channel);
-      *trigger = 0;
     }
     return OK;
   }
@@ -125,14 +126,14 @@ public:
 //-----------------------------------------------------------------
 //      load samples into function tables
 //-----------------------------------------------------------------
-int loadSamplesToTables(CSOUND *csound, int index, char *directory,
-                        int skiptime, int format, int channel) {
+int32_t loadSamplesToTables(CSOUND *csound, int32_t index, char *directory,
+                        cs_float skiptime, int32_t format, int32_t channel) {
 
   if (directory) {
     DIR *dir = opendir(directory);
     std::vector<std::string> fileNames;
     std::vector<std::string> fileExtensions;
-    int noOfFiles = 0;
+    int32_t noOfFiles = 0;
     fileExtensions.push_back(".wav");
     fileExtensions.push_back(".aiff");
     fileExtensions.push_back(".ogg");
@@ -144,7 +145,7 @@ int loadSamplesToTables(CSOUND *csound, int index, char *directory,
       while ((ent = readdir(dir)) != NULL) {
         std::ostringstream fullFileName;
         // only use supported file types
-        for (int i = 0; (size_t)i < fileExtensions.size(); i++)
+        for (int32_t i = 0; (size_t)i < fileExtensions.size(); i++)
         {
           std::string fname = ent->d_name;
           std::string extension;
@@ -174,8 +175,10 @@ int loadSamplesToTables(CSOUND *csound, int index, char *directory,
       std::sort(fileNames.begin(), fileNames.end());
 
       // push statements to score, starting with table number 'index'
-      for (int y = 0; (size_t)y < fileNames.size(); y++) {
+      for (int32_t y = 0; (size_t)y < fileNames.size(); y++) {
         std::ostringstream statement;
+        statement.imbue(std::locale::classic());
+        statement.precision(std::numeric_limits<cs_float>::max_digits10);
         statement << "f" << index + y << " 0 0 1 \"" << fileNames[y] << "\" "
                   << skiptime << " " << format << " " << channel << "\n";
         // csound->MessageS(csound, CSOUNDMSG_ORCH, statement.str().c_str());
@@ -199,147 +202,110 @@ typedef struct {
   OPDS h;
   ARRAYDAT *outArr;
   STRINGDAT *directoryName;
-  MYFLT *extension;
+  cs_float *extension;
 } DIR_STRUCT;
 
-/* this function will looks for files of a set type, in a particular directory
- */
-std::vector<std::string> searchDir(CSOUND *csound, char *directory,
-                                   char *extension);
+/* Collect matching directory entries in name order. */
+static int32_t searchDir(CSOUND *csound, const char *directory,
+                        const char *extension,
+                        std::vector<std::string> &fileNames);
 
 #include "arrays.h"
-#if 0
-/* from Opcodes/arrays.c */
-static inline void tabensure(CSOUND *csound, ARRAYDAT *p, int size) {
-    if (p->data==NULL || p->dimensions == 0 ||
-        (p->dimensions==1 && p->sizes[0] < size)) {
-      size_t ss;
-      if (p->data == NULL) {
-        CS_VARIABLE* var = p->arrayType->createVariable(csound, NULL);
-        p->arrayMemberSize = var->memBlockSize;
-      }
-      ss = p->arrayMemberSize*size;
-      if (p->data==NULL) {
-        p->data = (MYFLT*)csound->Calloc(csound, ss);
-        p->allocated = ss;
-      }
-      else if (ss > p->allocated) {
-        p->data = (MYFLT*) csound->ReAlloc(csound, p->data, ss);
-        p->allocated = ss;
-      }
-      if (p->dimensions==0) {
-        p->dimensions = 1;
-        p->sizes = (int32_t*)csound->Malloc(csound, sizeof(int32_t));
-      }
-    }
-    p->sizes[0] = size;
-}
-#endif
 
-static int directory(CSOUND *csound, DIR_STRUCT *p) {
-  int inArgCount = p->INOCOUNT;
-  char *extension, *file;
+static int32_t directory(CSOUND *csound, DIR_STRUCT *p) {
+  int32_t inArgCount = p->INOCOUNT;
+  const char *extension = "";
   std::vector<std::string> fileNames;
 
-  if (inArgCount == 0)
+  if (inArgCount < 1 || inArgCount > 2)
     return csound->InitError(
-        csound, "%s", Str("Error: you must pass a directory as a string."));
+        csound, "%s", Str("directory expects a path and an optional extension"));
 
-  if (inArgCount == 1) {
-    fileNames = searchDir(csound, p->directoryName->data, (char *)"");
-  }
-
-  else if (inArgCount == 2) {
-    CS_TYPE *argType = csound->GetTypeForArg(p->extension);
+  if (inArgCount == 2) {
+    const CS_TYPE *argType = GetTypeForArg(p->extension);
     if (strcmp("S", argType->varTypeName) == 0) {
-      extension = csound->Strdup(csound, ((STRINGDAT *)p->extension)->data);
-      fileNames = searchDir(csound, p->directoryName->data, extension);
+      extension = ((STRINGDAT *)p->extension)->data;
     } else
       return csound->InitError(csound,
                                "%s", Str("Error: second parameter to directory"
                                    " must be a string"));
   }
 
-  int numberOfFiles = fileNames.size();
-  tabinit(csound, p->outArr, numberOfFiles);
-  STRINGDAT *strings = (STRINGDAT *)p->outArr->data;
+  if (searchDir(csound, p->directoryName->data,
+                extension != NULL ? extension : "", fileNames) != OK)
+    return NOTOK;
 
-  for (int i = 0; i < numberOfFiles; i++) {
-    file = &fileNames[i][0u];
-    strings[i].size = strlen(file) + 1;
-    strings[i].data = csound->Strdup(csound, file);
+  int32_t numberOfFiles = (int32_t) fileNames.size();
+  if (UNLIKELY(tabinit(csound, p->outArr, numberOfFiles,
+                       p->h.insdshead) != OK))
+    return csound_array_init_resize_error(csound);
+  for (int32_t i = 0; i < numberOfFiles; i++) {
+    STRINGDAT source = {const_cast<char *>(fileNames[i].c_str()),
+                        fileNames[i].size() + 1, -1};
+    STRINGDAT *destination = csound_string_array_element(p->outArr, i);
+    p->outArr->arrayType->copyValue(csound, p->outArr->arrayType,
+                                    destination, &source, p->h.insdshead);
   }
-
-  fileNames.clear();
 
   return OK;
 }
 
-//-----------------------------------------------------------------
-//      load samples into function tables
-//-----------------------------------------------------------------
-std::vector<std::string> searchDir(CSOUND *csound, char *directory,
-                                   char *extension) {
-  std::vector<std::string> fileNames;
-  if (directory) {
-    DIR *dir = opendir(directory);
-    std::string fileExtension(extension);
-    int noOfFiles = 0;
+static int32_t searchDir(CSOUND *csound, const char *directory,
+                        const char *extension,
+                        std::vector<std::string> &fileNames) {
+  const char *path = directory != NULL ? directory : "";
+  DIR *dir = opendir(path);
+  std::string fileExtension(extension);
 
-    // check for valid path first
-    if (dir) {
-      struct dirent *ent;
-      while ((ent = readdir(dir)) != NULL) {
-        std::ostringstream fullFileName;
+  // check for valid path first
+  if (dir) {
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+      std::ostringstream fullFileName;
 
-        std::string fname = ent->d_name;
-        size_t lastPos = fname.find_last_of(".");
-        if (fname.length() > 0 && (fileExtension.empty() ||
-            (lastPos != std::string::npos &&
-            fname.substr(lastPos) == fileExtension))) {
-          if (strlen(directory) > 0) {
+      std::string fname = ent->d_name;
+      size_t lastPos = fname.find_last_of(".");
+      if (fname.length() > 0 && (fileExtension.empty() ||
+          (lastPos != std::string::npos &&
+          fname.substr(lastPos) == fileExtension))) {
+        if (strlen(path) > 0) {
 #if defined(WIN32)
-            fullFileName << directory << "\\" << ent->d_name;
+          fullFileName << path << "\\" << ent->d_name;
 #else
-            fullFileName << directory << "/" << ent->d_name;
+          fullFileName << path << "/" << ent->d_name;
 #endif
-          } else
-            fullFileName << ent->d_name;
+        } else
+          fullFileName << ent->d_name;
 
-          noOfFiles++;
-          fileNames.push_back(fullFileName.str());
-        }
+        fileNames.push_back(fullFileName.str());
       }
-
-      // Sort names
-      std::sort(fileNames.begin(), fileNames.end());
-    } else {
-      csound->Message(csound, Str("Cannot find directory. "
-                                  "Error opening directory: %s\n"),
-                      directory);
     }
-    closedir(dir);
-  }
 
-  return fileNames;
+    closedir(dir);
+    // Sort names
+    std::sort(fileNames.begin(), fileNames.end());
+  } else {
+    return csound->InitError(csound, Str("cannot open directory: %s"), path);
+  }
+  return OK;
 }
 
 extern "C" {
 
-PUBLIC int csoundModuleInit_ftsamplebank(CSOUND *csound) {
+PUBLIC int32_t csoundModuleInit_ftsamplebank(CSOUND *csound) {
 
-  int status = csound->AppendOpcode(
-      csound, (char *)"ftsamplebank.k", sizeof(kftsamplebank), 0, 3,
+  int32_t status = csound->AppendOpcode(
+      csound, (char *)"ftsamplebank.k", sizeof(kftsamplebank), 0,
       (char *)"k", (char *)"Skkkkk",
-      (int (*)(CSOUND *, void *))kftsamplebank::init_,
-      (int (*)(CSOUND *, void *))kftsamplebank::kontrol_,
-      (int (*)(CSOUND *, void *))0);
+      (int32_t (*)(CSOUND *, void *))kftsamplebank::init_,
+      (int32_t (*)(CSOUND *, void *))kftsamplebank::kontrol_,
+      (int32_t (*)(CSOUND *, void *))0);
 
   status |= csound->AppendOpcode(
-      csound, (char *)"ftsamplebank.i", sizeof(iftsamplebank), 0, 1,
+      csound, (char *)"ftsamplebank.i", sizeof(iftsamplebank), 0, 
       (char *)"i", (char *)"Siiii",
-      (int (*)(CSOUND *, void *))iftsamplebank::init_,
-      (int (*)(CSOUND *, void *))0, (int (*)(CSOUND *, void *))0);
+      (int32_t (*)(CSOUND *, void *))iftsamplebank::init_,
+      (int32_t (*)(CSOUND *, void *))0, (int32_t (*)(CSOUND *, void *))0);
 
   /*  status |= csound->AppendOpcode(csound,
       (char*)"ftsamplebank",
@@ -353,25 +319,30 @@ PUBLIC int csoundModuleInit_ftsamplebank(CSOUND *csound) {
       0); */
 
   status |= csound->AppendOpcode(
-      csound, (char *)"directory", sizeof(DIR_STRUCT), 0, 1, (char *)"S[]",
-      (char *)"SN", (int (*)(CSOUND *, void *))directory,
-      (int (*)(CSOUND *, void *))0, (int (*)(CSOUND *, void *))0);
+      csound, (char *)"directory", sizeof(DIR_STRUCT), 0, (char *)"S[]",
+      (char *)"SN", (int32_t (*)(CSOUND *, void *))directory,
+      (int32_t (*)(CSOUND *, void *))0, (int32_t (*)(CSOUND *, void *))0);
   return status;
 }
 
-#ifndef INIT_STATIC_MODULES
-PUBLIC int csoundModuleCreate(CSOUND *csound) {
+#ifdef BUILD_PLUGINS
+PUBLIC int32_t csoundModuleInfo(void) {
+  return CSOUND_MODULE_INFO;
+}
+
+PUBLIC int32_t csoundModuleCreate(CSOUND *csound) {
   IGN(csound);
   return 0;
 }
 
-PUBLIC int csoundModuleInit(CSOUND *csound) {
+PUBLIC int32_t csoundModuleInit(CSOUND *csound) {
   return csoundModuleInit_ftsamplebank(csound);
 }
 
-PUBLIC int csoundModuleDestroy(CSOUND *csound) {
+PUBLIC int32_t csoundModuleDestroy(CSOUND *csound) {
   IGN(csound);
   return 0;
 }
 #endif
 }
+#endif

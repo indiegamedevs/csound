@@ -17,15 +17,17 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_PVS_OPS_H
 #define CSOUND_PVS_OPS_H
 
-/* #include "csdl.h" */
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
+#endif
 
 #include "interlocks.h"
 
@@ -36,8 +38,9 @@ extern int32_t psynth_init_(CSOUND *);
 extern int32_t pvsbasic_init_(CSOUND *);
 extern int32_t pvscent_init_(CSOUND *);
 extern int32_t pvsdemix_init_(CSOUND *);
-extern int32_t
-pvsband_init_(CSOUND *);
+extern int32_t pvsband_init_(CSOUND *);
+extern int32_t pvsbuffer_localops_init_(CSOUND *);
+extern int32_t pvsgendy_localops_init_(CSOUND *);
 
 #endif  /* CSOUND_PVS_OPS_H */
 

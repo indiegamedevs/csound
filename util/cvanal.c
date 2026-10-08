@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /************************************************************************/
@@ -37,7 +36,7 @@
 static int32_t takeFFT(CSOUND *csound, SOUNDIN *inputSound, CVSTRUCT *outputCVH,
                        int64_t Hlenpadded, SNDFILE *infd, FILE *ofd, int32_t nf);
 static int32_t quit(CSOUND*, char *msg);
-static int32_t CVAlloc(CSOUND*, CVSTRUCT**, int64_t, int32_t, MYFLT,
+static int32_t CVAlloc(CSOUND*, CVSTRUCT**, int64_t, int32_t, cs_float,
                        int32_t, int32_t, int64_t, int32_t, int32_t);
 
 #define SF_UNK_LEN      -1      /* code for sndfile len unkown  */
@@ -55,7 +54,7 @@ static int32_t cvanal(CSOUND *csound, int32_t argc, char **argv)
     void    *ofd_handle;
     int32_t err, channel = ALLCHNLS;
     SOUNDIN *p;  /* space allocated by SAsndgetset() */
-    MYFLT   beg_time = FL(0.0), input_dur = FL(0.0), sr = FL(0.0);
+    cs_float   beg_time = FL(0.0), input_dur = FL(0.0), sr = FL(0.0);
     int64_t Estdatasiz, Hlen;
     int64_t Hlenpadded = 1;
     char    err_msg[512];
@@ -73,31 +72,31 @@ static int32_t cvanal(CSOUND *csound, int32_t argc, char **argv)
         case 's':
           FIND(Str("no sampling rate"))
 #ifdef USE_DOUBLE
-          csound->sscanf(s, "%lf", &sr);
+          csound->Sscanf(s, "%" CS_DOUBLE_SCAN, &sr);
 #else
-          csound->sscanf(s, "%f", &sr);
+          csound->Sscanf(s, "%f", &sr);
 #endif
           break;
         case 'c':
           FIND(Str("no channel"))
-            sscanf(s, "%d", &channel);
+            csound->Sscanf(s, "%d", &channel);
           if (UNLIKELY((channel < 1) || (channel > 4)))
             return quit(csound, Str("channel must be in the range 1 to 4"));
           break;
         case 'b':
           FIND(Str("no begin time"))
 #ifdef USE_DOUBLE
-          csound->sscanf(s, "%lf", &beg_time);
+          csound->Sscanf(s, "%" CS_DOUBLE_SCAN, &beg_time);
 #else
-          csound->sscanf(s, "%f", &beg_time);
+          csound->Sscanf(s, "%f", &beg_time);
 #endif
           break;
         case 'd':
           FIND(Str("no duration time"))
 #ifdef USE_DOUBLE
-          csound->sscanf(s, "%lf", &input_dur);
+          csound->Sscanf(s, "%" CS_DOUBLE_SCAN, &input_dur);
 #else
-          csound->sscanf(s, "%f", &input_dur);
+          csound->Sscanf(s, "%f", &input_dur);
 #endif
           break;
         case 'X':
@@ -113,18 +112,18 @@ static int32_t cvanal(CSOUND *csound, int32_t argc, char **argv)
     infilnam = *argv++;
     outfilnam = *argv;
 
-    if (UNLIKELY((infd = csound->SAsndgetset(csound, infilnam, &p, &beg_time,
+    if (UNLIKELY((infd = (csound->GetUtility(csound))->SndinGetSetSA(csound, infilnam, &p, &beg_time,
                                              &input_dur, &sr, channel)) == NULL)) {
       snprintf(err_msg, 512, Str("error while opening %s"), infilnam);
       return quit(csound, err_msg);
     }
-    sr = (MYFLT) p->sr;
+    sr = (cs_float) p->sr;
 
     Hlen = p->getframes;
     while (Hlenpadded < 2*Hlen-1)
       Hlenpadded <<= 1;
 
-    Estdatasiz = (Hlenpadded + 2) * sizeof(MYFLT);
+    Estdatasiz = (Hlenpadded + 2) * sizeof(cs_float);
     if (channel == ALLCHNLS)
       Estdatasiz *= p->nchanls;
 
@@ -136,7 +135,7 @@ static int32_t cvanal(CSOUND *csound, int32_t argc, char **argv)
     }
     if (new_format) {
 
-      ofd_handle = csound->FileOpen2(csound, &ofd, CSFILE_STD, outfilnam, "w",
+      ofd_handle = csound->FileOpen(csound, &ofd, CSFILE_STD, outfilnam, "w",
                                      "SADIR", CSFTYPE_CVANAL, 0);
       if (UNLIKELY(ofd_handle == NULL)) {         /* open the output CV file */
         return quit(csound, Str("cannot create output file"));
@@ -146,7 +145,7 @@ static int32_t cvanal(CSOUND *csound, int32_t argc, char **argv)
               cvh->headBsize,              /* total number of bytes of data */
               cvh->dataBsize,              /* total number of bytes of data */
               cvh->dataFormat,             /* (int32_t) format specifier */
-              (double)cvh->samplingRate,   /* of original sample */
+              (cs_double)cvh->samplingRate,   /* of original sample */
               cvh->src_chnls,              /* no. of channels in source */
               cvh->channel,                /* requested channel(s) */
               cvh->Hlen,                   /* length of impulse reponse */
@@ -156,7 +155,7 @@ static int32_t cvanal(CSOUND *csound, int32_t argc, char **argv)
               cvh->headBsize,              /* total number of bytes of data */
               cvh->dataBsize,              /* total number of bytes of data */
               cvh->dataFormat,             /* (int32_t) format specifier */
-              (double)cvh->samplingRate,   /* of original sample */
+              (cs_double)cvh->samplingRate,   /* of original sample */
               cvh->src_chnls,              /* no. of channels in source */
               cvh->channel,                /* requested channel(s) */
               cvh->Hlen,                   /* length of impulse reponse */
@@ -164,7 +163,7 @@ static int32_t cvanal(CSOUND *csound, int32_t argc, char **argv)
 #endif
     }
     else {
-      ofd_handle = csound->FileOpen2(csound, &ofd, CSFILE_STD, outfilnam, "wb",
+      ofd_handle = csound->FileOpen(csound, &ofd, CSFILE_STD, outfilnam, "wb",
                                      "SFDIR", CSFTYPE_CVANAL, 0);
       if (UNLIKELY(ofd_handle == NULL)) {           /* open the output CV file */
         return quit(csound, Str("cannot create output file"));
@@ -191,15 +190,16 @@ static int32_t takeFFT(CSOUND *csound, SOUNDIN *p, CVSTRUCT *cvh,
                    int64_t Hlenpadded, SNDFILE *infd, FILE *ofd, int32_t nf)
 {
     int32_t i, j, read_in;
-    MYFLT   *inbuf, *outbuf;
-    MYFLT   *fp1, *fp2;
+    cs_float   *inbuf, *outbuf;
+    cs_float   *fp1, *fp2;
     int32_t Hlen = (int32_t) cvh->Hlen;
     int32_t nchanls;
+    void *setup;
 
     nchanls = cvh->channel != ALLCHNLS ? 1 : cvh->src_chnls;
     j = (int32_t) (Hlen * nchanls);
-    inbuf = fp1 = (MYFLT *) csound->Malloc(csound, j * sizeof(MYFLT));
-    if (UNLIKELY((read_in = csound->getsndin(csound, infd, inbuf, j, p)) < j)) {
+    inbuf = fp1 = (cs_float *) csound->Malloc(csound, j * sizeof(cs_float));
+    if (UNLIKELY((read_in = (csound->GetUtility(csound))->Sndin(csound, infd, inbuf, j, p)) < j)) {
       csound->Message(csound, "%s", Str("less sound than expected!\n"));
       return -1;
     }
@@ -209,11 +209,12 @@ static int32_t takeFFT(CSOUND *csound, SOUNDIN *p, CVSTRUCT *cvh,
     }
 
     fp1 = inbuf;
-    outbuf = fp2 = (MYFLT*) csound->Malloc(csound,
-                                           sizeof(MYFLT) * (Hlenpadded + 2));
+    outbuf = fp2 = (cs_float*) csound->Malloc(csound,
+                                           sizeof(cs_float) * (Hlenpadded + 2));
     /* for (i = 0; i < (Hlenpadded + 2); i++) */
     /*   outbuf[i] = FL(0.0); */
-    memset(outbuf, 0, sizeof(MYFLT)*(Hlenpadded + 2));
+    memset(outbuf, 0, sizeof(cs_float)*(Hlenpadded + 2));
+    setup = csound->RealFFTSetup(csound, (int32_t)Hlenpadded, FFT_FWD);
 
     for (i = 0; i < nchanls; i++) {
       for (j = Hlen; j > 0; j--) {
@@ -221,21 +222,21 @@ static int32_t takeFFT(CSOUND *csound, SOUNDIN *p, CVSTRUCT *cvh,
         fp1 += nchanls;
       }
       fp1 = inbuf + i + 1;
-      csound->RealFFT(csound, outbuf, (int32_t) Hlenpadded);
+      csound->RealFFT(csound, setup, outbuf);
       outbuf[Hlenpadded] = outbuf[1];
       outbuf[1] = outbuf[Hlenpadded + 1L] = FL(0.0);
       /* write straight out, just the indep vals */
       if (nf) {
         int32 i, l;
-        l = (cvh->dataBsize/nchanls)/sizeof(MYFLT);
+        l = (cvh->dataBsize/nchanls)/sizeof(cs_float);
         for (i=0; i<l; i++) {
-            fprintf(ofd, "%a\n", (double)outbuf[i]);
+            fprintf(ofd, "%a\n", (cs_double)outbuf[i]);
         }
       }
       else
         if (UNLIKELY(1!=fwrite(outbuf, cvh->dataBsize/nchanls, 1, ofd)))
           fprintf(stderr, "%s", Str("Write failure\n"));
-      for (j = Hlenpadded - Hlen; j > 0; j--)
+      for (j = (int32_t) (Hlenpadded - Hlen); j > 0; j--)
         fp2[j] = FL(0.0);
       fp2 = outbuf;
     }
@@ -247,7 +248,7 @@ static int32_t CVAlloc(
     CVSTRUCT    **pphdr,        /* returns address of new block */
     int64_t     dataBsize,      /* desired bytesize of datablock */
     int32_t     dataFormat,     /* data format - PVMYFLT etc */
-    MYFLT       srate,          /* sampling rate of original in Hz */
+    cs_float       srate,          /* sampling rate of original in Hz */
     int32_t     src_chnls,      /* number of channels in source */
     int32_t     channel,        /* requested channel(s) */
     int64_t     Hlen,           /* impulse response length */
@@ -265,13 +266,13 @@ static int32_t CVAlloc(
     if (( (*pphdr) = (CVSTRUCT *) csound->Malloc(csound, hSize)) == NULL )
       return(CVE_MALLOC);
     (*pphdr)->magic        = CVMAGIC;
-    (*pphdr)->headBsize    = hSize;
-    (*pphdr)->dataBsize    = dataBsize;
+    (*pphdr)->headBsize    = (int32_t) hSize;
+    (*pphdr)->dataBsize    = (int32_t) dataBsize;
     (*pphdr)->dataFormat   = dataFormat;
     (*pphdr)->samplingRate = srate;
     (*pphdr)->src_chnls    = src_chnls;
     (*pphdr)->channel      = channel;
-    (*pphdr)->Hlen         = Hlen;
+    (*pphdr)->Hlen         = (int32_t) Hlen;
     (*pphdr)->Format       = Format;
     /* leave info bytes undefined */
     return(CVE_OK);
@@ -281,10 +282,10 @@ static int32_t CVAlloc(
 
 int32_t cvanal_init_(CSOUND *csound)
 {
-    int32_t retval = csound->AddUtility(csound, "cvanal", cvanal);
+    int32_t retval = (csound->GetUtility(csound))->AddUtility(csound, "cvanal", cvanal);
     if (!retval) {
       retval =
-        csound->SetUtilityDescription(csound, "cvanal",
+        (csound->GetUtility(csound))->SetUtilityDescription(csound, "cvanal",
                                       Str("Soundfile analysis for convolve"));
     }
     return retval;

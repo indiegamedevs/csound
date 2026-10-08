@@ -1,3 +1,9 @@
+<CsTest>
+description = "until loop and k[]"
+
+[expect]
+exit = 0
+</CsTest>
 <CsoundSynthesizer>
 <CsOptions>
 </CsOptions>
@@ -8,7 +14,7 @@ ksmps  = 300
 nchnls = 1
 
 instr 1
- t1 init 10
+ t1:k[] init 10
  k1 init 0
  
  until k1 >= 10 do

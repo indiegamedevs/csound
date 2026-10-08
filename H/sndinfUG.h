@@ -17,21 +17,22 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
+
+#pragma once
 
 typedef struct {
     OPDS    h;
-    MYFLT   *r1, *ifilno, *irawfiles;
+    cs_float   *r1, *ifilno, *irawfiles;
 } SNDINFO;
 
 typedef struct {
     OPDS    h;
-    MYFLT   *r1, *ifilno, *channel;
+    cs_float   *r1, *ifilno, *channel;
 } SNDINFOPEAK;
 
 typedef struct {
     OPDS  h;
-    MYFLT *r1, *ifilno;
+    cs_float *r1, *ifilno;
 } FILEVALID;

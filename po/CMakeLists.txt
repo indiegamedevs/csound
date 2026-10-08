@@ -10,7 +10,7 @@ function(compile_po code _infile)
         )
     INSTALL(FILES ${_mofile}
         DESTINATION ${LOCALE_INSTALL_DIR}/${code}/LC_MESSAGES/
-        RENAME "csound6.mo"
+        RENAME "csound${CS_VERSION}.mo"
         )
     add_custom_target(pofile_${code} ALL DEPENDS ${_mofile})
     add_dependencies(translations pofile_${code})
@@ -18,12 +18,13 @@ endfunction(compile_po)
 
 if(USE_GETTEXT)
     ADD_CUSTOM_TARGET(translations ALL)
+    compile_po(en_GB csound.po)
     compile_po(en_US american.po)
     compile_po(es_CO es_CO.po)
     compile_po(es spanish.po)
     compile_po(fr french.po)
     compile_po(de german.po)
     compile_po(it italian.po)
+    compile_po(ro romanian.po)
     compile_po(ru russian.po)
 endif()
-

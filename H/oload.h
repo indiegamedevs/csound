@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_OLOAD_H
@@ -34,21 +33,21 @@
 
 typedef struct {
         char    *lbltxt;
-        int     *ndxp;
+        int32_t     *ndxp;
 } LBLARG;
 
 typedef struct {
-        int     lblno;
-        MYFLT   **argpp;
+        int32_t     lblno;
+        cs_float   **argpp;
 } LARGNO;
 
 typedef struct {
-        MYFLT   *sets[PMAX];
+        cs_float   *sets[PMAX];
 } PVSET;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *insno, *itime;
+        cs_float   *insno, *itime;
 } TURNON;
 
 #endif  /* CSOUND_OLOAD_H */

@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /****************************************************************/
@@ -28,20 +27,22 @@
 /* 20apr90 dpwe                                                 */
 /****************************************************************/
 
+#pragma once
+
 #define     SPTS    (16)    /* SINC TABLE: How many points in each lobe   */
 #define     SPDS    (6)     /*   (was 8)   How many sinc lobes to go out  */
 #define     SBW     0.9     /* To compensate for short sinc, reduce bandw */
 
 /* Predeclare static supporting functions */
 
-void    Polar2Real_PVOC(CSOUND *, MYFLT *, int32_t);
-void    RewrapPhase(MYFLT *, int32, MYFLT *);
-void    FrqToPhase(MYFLT *, int32, MYFLT, MYFLT, MYFLT);
-void    FetchIn(float *, MYFLT *, int32, MYFLT);
-void    ApplyHalfWin(MYFLT *, MYFLT *, int32);
-void    addToCircBuf(MYFLT *, MYFLT *, int32, int32, int32);
-void    writeClrFromCircBuf(MYFLT *, MYFLT *, int32, int32, int32);
-void    UDSample(PVOC_GLOBALS *, MYFLT *, MYFLT, MYFLT *, int32, int32, MYFLT);
+void    Polar2Real_PVOC(CSOUND *, cs_float *, CSOUND_FFT_SETUP *);
+void    RewrapPhase(cs_float *, int32, cs_float *);
+void    FrqToPhase(cs_float *, int32, cs_float, cs_float, cs_float);
+void    FetchIn(float *, cs_float *, int32, cs_float);
+void    ApplyHalfWin(cs_float *, cs_float *, int32);
+void    addToCircBuf(const cs_float *, cs_float *, int32, int32, int32);
+void    writeClrFromCircBuf(cs_float *, cs_float *, int32, int32, int32);
+void    UDSample(PVOC_GLOBALS *, const cs_float *, cs_float, cs_float *, int32, int32, cs_float);
 void    MakeSinc(PVOC_GLOBALS *);
-void    PreWarpSpec(MYFLT *, int32, MYFLT, MYFLT *);
+void    PreWarpSpec(cs_float *, int32, cs_float, cs_float *);
 

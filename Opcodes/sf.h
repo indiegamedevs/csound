@@ -17,10 +17,9 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
-
+ 
 #if !defined(_SF_H)
 #include "sftype.h"
 #ifdef          __GNUC__
@@ -46,16 +45,16 @@ struct _splitType {
         int64_t endOffset;
         int64_t startLoopOffset;
         int64_t endLoopOffset;
-        char overridingRootKey;
-        char coarseTune;
-        char fineTune;
+        /*char*/ SBYTE overridingRootKey;
+        /*char*/ SBYTE coarseTune;
+        /*char*/ SBYTE fineTune;
         SHORT scaleTuning;
         SHORT initialAttenuation;
         SHORT pan;
-        MYFLT attack;
-        MYFLT decay;
-        MYFLT sustain;
-        MYFLT release;
+        cs_float attack;
+        cs_float decay;
+        cs_float sustain;
+        cs_float release;
 } PACKED;
 typedef struct _splitType splitType;
 
@@ -76,8 +75,8 @@ struct _layerType {
         BYTE maxNoteRange;
         BYTE minVelRange;
         BYTE maxVelRange;
-        char coarseTune;
-        char fineTune;
+        SBYTE coarseTune;
+        SBYTE fineTune;
         SHORT scaleTuning;
         SHORT initialAttenuation;
         SHORT pan;
@@ -118,7 +117,7 @@ struct _CHUNKS {
 typedef struct _CHUNKS CHUNKS;
 
 struct _SFBANK {
-        char name[256];
+        char *name;
         int32_t presets_num;
         presetType *preset;
         int32_t instrs_num;

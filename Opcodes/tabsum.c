@@ -17,18 +17,22 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
+#endif
+
 #include "interlocks.h"
 
 typedef struct {
     OPDS    h;
-    MYFLT   *kans;
-    MYFLT   *itab;
-    MYFLT   *kmin, *kmax;
+    cs_float   *kans;
+    cs_float   *itab;
+    cs_float   *kmin, *kmax;
   /* Local */
     FUNC    *ftp;
 } TABSUM;
@@ -36,8 +40,8 @@ typedef struct {
 
 static int32_t tabsuminit(CSOUND *csound, TABSUM *p)
 {
-    if (UNLIKELY((p->ftp = csound->FTnp2Find(csound, p->itab)) == NULL)) {
-      return csound->InitError(csound, Str("tabsum: No table"));
+    if (UNLIKELY((p->ftp = csound->FTFind(csound, p->itab)) == NULL)) {
+      return csound->InitError(csound, "%s", Str("tabsum: No table"));
     }
     return OK;
 }
@@ -47,17 +51,27 @@ static int32_t tabsuminit(CSOUND *csound, TABSUM *p)
 static int32_t tabsum(CSOUND *csound, TABSUM *p)
 {
     int32_t i, min, max;
-    MYFLT ans = FL(0.0);
+    cs_double min_value = (cs_double)*p->kmin;
+    cs_double max_value = (cs_double)*p->kmax;
+    cs_float ans = FL(0.0);
     FUNC  *ftp = p->ftp;
-    MYFLT *t;
+    cs_float *t;
 
     if (UNLIKELY(ftp==NULL))
 
       return csound->PerfError(csound, &(p->h),
-                               Str("tabsum: Not initialised"));
+                               "%s", Str("tabsum: Not initialised"));
     t = p->ftp->ftable;
-    min = MYFLT2LRND(*p->kmin);
-    max = MYFLT2LRND(*p->kmax);
+    /* Allow rounding to index zero or the allocated guard point. */
+    if (UNLIKELY(!(min_value > -1.0 && min_value < (cs_double)ftp->flen + 1.0 &&
+                   max_value > -1.0 && max_value < (cs_double)ftp->flen + 1.0)))
+      return csound->PerfError(csound, &(p->h), "%s",
+                               Str("tabsum: range is outside table bounds"));
+    min = CS_FLOAT2LRND(min_value);
+    max = CS_FLOAT2LRND(max_value);
+    if (UNLIKELY((uint32_t)min > ftp->flen || (uint32_t)max > ftp->flen))
+      return csound->PerfError(csound, &(p->h), "%s",
+                               Str("tabsum: range is outside table bounds"));
     if (UNLIKELY(min == 0 && max == 0)) max = ftp->flen-1;
     else if (UNLIKELY(min > max)) {
       int32_t k = min; min = max; max = k;
@@ -71,11 +85,10 @@ static int32_t tabsum(CSOUND *csound, TABSUM *p)
 #define S(x)    sizeof(x)
 
 static OENTRY tabsum_localops[] = {
-{ "tabsum",     S(TABSUM),     0, 3,     "k",    "iOO",
+{ "tabsum",     S(TABSUM),     0,      "k",    "iOO",
                 (SUBR)tabsuminit, (SUBR)tabsum },
 };
 
 LINKAGE_BUILTIN(tabsum_localops)
-
 
 

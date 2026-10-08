@@ -18,8 +18,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 /* ***************************************************************** */
 /* ******** Program to export pvoc files in tabular format. ******** */
@@ -31,6 +30,7 @@
 
 #include "std_util.h"
 #include <stdio.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include "pvfileio.h"
@@ -68,10 +68,11 @@ static int32_t pv_export(CSOUND *csound, int32_t argc, char **argv)
 
     fprintf(outf, "FormatTag,Channels,SamplesPerSec,AvgBytesPerSec,"
             "BlockAlign,BitsPerSample,cbSize\n");
-    fprintf(outf, "%d,%d,%d,%d,%u,%u,%d\n",
-            fmt.wFormatTag, fmt.nChannels, fmt.nSamplesPerSec,
-            fmt.nAvgBytesPerSec, fmt.nBlockAlign, fmt.wBitsPerSample,
-            fmt.cbSize);
+    fprintf(outf, "%u,%u,%" PRIu32 ",%" PRIu32 ",%u,%u,%u\n",
+            (unsigned int)fmt.wFormatTag, (unsigned int)fmt.nChannels,
+            (uint32_t)fmt.nSamplesPerSec, (uint32_t)fmt.nAvgBytesPerSec,
+            (unsigned int)fmt.nBlockAlign, (unsigned int)fmt.wBitsPerSample,
+            (unsigned int)fmt.cbSize);
     fprintf(outf, "WordFormat,AnalFormat,SourceFormat,WindowType,"
             "AnalysisBins,Winlen,Overlap,FrameAlign,"
             "AnalysisRate,WindowParam\n");
@@ -118,10 +119,10 @@ static int32_t pv_export(CSOUND *csound, int32_t argc, char **argv)
 
 int32_t pv_export_init_(CSOUND *csound)
 {
-    int32_t retval = csound->AddUtility(csound, "pv_export", pv_export);
+    int32_t retval = (csound->GetUtility(csound))->AddUtility(csound, "pv_export", pv_export);
     if (!retval) {
       retval =
-        csound->SetUtilityDescription(csound, "pv_export",
+        (csound->GetUtility(csound))->SetUtilityDescription(csound, "pv_export",
                                       Str("translate PVOC analysis file "
                                           "to text form"));
     }

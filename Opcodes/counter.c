@@ -17,49 +17,56 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
-#include "csoundCore.h"       /*                              COUNTER.C         */
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
+#include "csoundCore.h"
+#endif
+
 #include "interlocks.h"
 
 /* Structure of a counter */
 typedef struct {
-  MYFLT val;
-  MYFLT max;
-  MYFLT min;
-  MYFLT inc;
-  int   cycles;
+  cs_float val;
+  cs_float max;
+  cs_float min;
+  cs_float inc;
+  uint64_t      cycles, generation;
+  int32_t       active;
 } COUNT;
 
 /* for create counter ocde */
 typedef struct {
   OPDS          h;
-  MYFLT         *res;
-  MYFLT         *max, *min, *inc;
+  cs_float         *res;
+  cs_float         *max, *min, *inc;
 } CNTSET;
 
 typedef struct {
   OPDS          h;
-  MYFLT         *res;
-  MYFLT         *icnt;
+  cs_float         *res;
+  cs_float         *icnt;
   COUNT         *cnt;
+  uint64_t      generation;
 } COUNTER;
 
 typedef struct {
   OPDS          h;
-  MYFLT         *max, *min, *inc;
-  MYFLT         *icnt;
+  cs_float         *max, *min, *inc;
+  cs_float         *icnt;
   COUNT         *cnt;
+  uint64_t      generation;
 } CNTSTATE;
 
 
 /* Global structure for all counters */
 typedef  struct {
-  int           max_num;
-  int           used;
-  int           free;
+  int32_t           max_num;
+  int32_t           used;
+  int32_t           free;
   COUNT         **cnts;
 } CNT_GLOBALS;
 
@@ -70,7 +77,7 @@ static int32_t setcnt(CSOUND *csound, CNTSET *p)
     COUNT *y;
     CNT_GLOBALS *q = (CNT_GLOBALS*)
       csound->QueryGlobalVariable(csound, "counterGlobals_");
-    int m = 0;
+    int32_t m = 0;
     if (q==NULL) {
       if (UNLIKELY(csound->CreateGlobalVariable(csound, "counterGlobals_",
                                                     sizeof(CNT_GLOBALS)) != 0))
@@ -82,61 +89,83 @@ static int32_t setcnt(CSOUND *csound, CNTSET *p)
       q->cnts = (COUNT**)csound->Calloc(csound, 10*sizeof(COUNT*));
     }
     if (q->free) {
-      int n = 0;
-      while (q->cnts[n]!=NULL) n++;
+      while (q->cnts[m]->active) m++;
       q->free--;
-      m = n;
     } else {
-      if (q->max_num >= q->used) {
-        COUNT** tt = q->cnts;
-        tt = (COUNT**)csound->ReAlloc(csound,
-                                      tt, (q->max_num+10)*sizeof(COUNT*));
+      /* Counter handles must remain exact in either cs_float format. */
+      const int32_t limit = sizeof(cs_float) == sizeof(float) ? 16777216 : INT32_MAX;
+      if (q->used == limit)
+        return csound->InitError(csound, "%s", Str("counter: too many counters"));
+      if (q->used == q->max_num) {
+        int32_t capacity = q->max_num > limit - 10 ? limit : q->max_num + 10;
+        if ((size_t)capacity > SIZE_MAX / sizeof(COUNT*))
+          return csound->InitError(csound, "%s", Str("counter: too many counters"));
+        COUNT **tt = (COUNT**)csound->ReAlloc(csound, q->cnts,
+                                             (size_t)capacity * sizeof(COUNT*));
         if (tt == NULL)
           return csound->InitError(csound, "%s",
                                    Str("Failed to allocate counters\n"));
         q->cnts = tt;
-        q->max_num += 10;
+        q->max_num = capacity;
       }
-      m = q->used;
-      ++q->used;
+      m = q->used++;
+      q->cnts[m] = (COUNT*)csound->Calloc(csound, sizeof(COUNT));
     }
-    q->cnts[m] = (COUNT*)csound->Calloc(csound,sizeof(COUNT));
     y = q->cnts[m];
+    y->active = 1;
+    y->generation++;
+    y->cycles = 0;
     y->val = 0;
     y->min = *p->min;
     y->max = *p->max;
     y->inc = *p->inc;
-    *p->res = (MYFLT)m;
+    *p->res = (cs_float)m;
     return OK;
 }
 
-COUNT* find_counter(CSOUND *csound, int n)
+/* Slots remain allocated until engine reset. A new generation on reuse keeps
+   existing opcodes from silently attaching to a replacement counter. */
+#define COUNTER_VALID(p) ((p)->cnt->active && \
+                          (p)->generation == (p)->cnt->generation)
+
+static COUNT* find_counter(CNT_GLOBALS *globals, cs_float handle)
 {
-    CNT_GLOBALS *q = (CNT_GLOBALS*)
-      csound->QueryGlobalVariable(csound, "counterGlobals_");
-    if (UNLIKELY(q==NULL)) return NULL;
-    if (n>q->max_num || n<0) return NULL;
-    return q->cnts[n];
+    cs_double id = handle;
+    if (UNLIKELY(globals == NULL || !(id >= 0.0 && id < globals->used)))
+      return NULL;
+    COUNT *cnt = globals->cnts[(int32_t)id];
+    return cnt->active ? cnt : NULL;
 }
 
 static int32_t count_init(CSOUND *csound, COUNTER *p)
 {
-    COUNT* q = find_counter(csound, (int)*p->icnt);
-    if (q==NULL) return NOTOK;
+    CNT_GLOBALS *globals = (CNT_GLOBALS*)
+      csound->QueryGlobalVariable(csound, "counterGlobals_");
+    COUNT *q = find_counter(globals, *p->icnt);
+    if (UNLIKELY(q == NULL))
+      return csound->InitError(csound, "%s", Str("counter: invalid handle"));
     p->cnt = q;
+    p->generation = q->generation;
     return OK;
 }
 
 static int32_t count_init0(CSOUND *csound, COUNTER *p)
 {
-    COUNT* q = find_counter(csound, (int)*p->res);
-    if (q==NULL) return NOTOK;
+    CNT_GLOBALS *globals = (CNT_GLOBALS*)
+      csound->QueryGlobalVariable(csound, "counterGlobals_");
+    COUNT *q = find_counter(globals, *p->res);
+    if (UNLIKELY(q == NULL))
+      return csound->InitError(csound, "%s", Str("counter: invalid handle"));
     p->cnt = q;
+    p->generation = q->generation;
     return OK;
 }
 
 static int32_t count_perf(CSOUND *csound, COUNTER *p)
 {
+    if (UNLIKELY(!COUNTER_VALID(p)))
+      return csound->PerfError(csound, &p->h, "%s",
+                               Str("counter: counter has been deleted"));
     COUNT *q = p->cnt;
     if (q->val > q->max) {
       q->val = q->min;
@@ -159,32 +188,48 @@ static int32_t count_init_perf(CSOUND *csound, COUNTER *p)
 
 static int32_t count_cycles(CSOUND *csound, COUNTER* p)
 {
+    if (UNLIKELY(!COUNTER_VALID(p)))
+      return csound->PerfError(csound, &p->h, "%s",
+                               Str("counter: counter has been deleted"));
     *p->res = p->cnt->cycles;
     return OK;
 }
 
 static int32_t count_read(CSOUND *csound, COUNTER* p)
 {
+    if (UNLIKELY(!COUNTER_VALID(p)))
+      return csound->PerfError(csound, &p->h, "%s",
+                               Str("counter: counter has been deleted"));
     *p->res = p->cnt->val;
     return OK;
 }
 
 static int32_t count_reset(CSOUND *csound, COUNTER* p)
 {
+    if (UNLIKELY(!COUNTER_VALID(p)))
+      return csound->PerfError(csound, &p->h, "%s",
+                               Str("counter: counter has been deleted"));
     p->cnt->val = p->cnt->min;
     return OK;
 }
 
 static int32_t count_init3(CSOUND *csound, CNTSTATE *p)
 {
-    COUNT* q = find_counter(csound, (int)*p->icnt);
-    if (q==NULL) return NOTOK;
+    CNT_GLOBALS *globals = (CNT_GLOBALS*)
+      csound->QueryGlobalVariable(csound, "counterGlobals_");
+    COUNT *q = find_counter(globals, *p->icnt);
+    if (UNLIKELY(q == NULL))
+      return csound->InitError(csound, "%s", Str("counter: invalid handle"));
     p->cnt = q;
+    p->generation = q->generation;
     return OK;
 }
 
 static int32_t count_state(CSOUND *csound, CNTSTATE *p)
 {
+    if (UNLIKELY(!COUNTER_VALID(p)))
+      return csound->PerfError(csound, &p->h, "%s",
+                               Str("counter: counter has been deleted"));
     *p->max = p->cnt->max;
     *p->min = p->cnt->min;
     *p->inc = p->cnt->inc;
@@ -193,32 +238,50 @@ static int32_t count_state(CSOUND *csound, CNTSTATE *p)
 
 static int32_t count_del(CSOUND *csound, COUNTER* p)
 {
-    int n = (int)*p->icnt;
     CNT_GLOBALS *q = (CNT_GLOBALS*)
       csound->QueryGlobalVariable(csound, "counterGlobals_");
-    if (q==NULL || n>q->max_num || n<0 || q->cnts[n]==NULL) {
+    COUNT *cnt = find_counter(q, *p->icnt);
+    if (cnt == NULL) {
       *p->res = -FL(1.0);
       return OK;
     }
-    csound->Free(csound, q->cnts[n]);
-    q->cnts[n] = NULL;
+    int32_t n = (int32_t)*p->icnt;
+    cnt->active = 0;
     q->free++;
-    *p->res = (MYFLT)n;
+    *p->res = (cs_float)n;
     return OK;
 }
 
 #define S(x)    sizeof(x)
 
+/* All counter operations share state, including across instrument instances. */
 static OENTRY counter_localops[] = {
-  { "cntCreate", S(CNTSET), 0, 1, "i", "pop", (SUBR)setcnt, NULL, NULL   },
-  { "count", S(COUNTER), SK, 3, "k", "o", (SUBR)count_init, (SUBR)count_perf },
-  { "count_i", S(COUNTER), SK, 1, "i", "o", (SUBR)count_init_perf, NULL },
-  { "cntCycles", S(COUNTER), SK, 3, "k", "o", (SUBR)count_init, (SUBR)count_cycles },
-  { "cntRead", S(COUNTER), SK, 3, "k", "o", (SUBR)count_init, (SUBR)count_read },
-  { "cntReset", S(COUNTER), SK, 3, "", "o", (SUBR)count_init0, (SUBR)count_reset },
-  { "cntState", S(CNTSTATE), SK, 3, "kkk", "o", (SUBR)count_init3, (SUBR)count_state },
-  { "cntDelete", S(COUNTER), SK, 2, "k", "k", NULL, (SUBR)count_del, NULL },
-  { "cntDelete_i", S(COUNTER), SK, 1, "i", "i", (SUBR)count_del, NULL, NULL },
+  CSOUND_DEPRECATED_OPCODE("cntCreate", "cntcreate", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  { "cntCreate", S(CNTSET), IB,  "i", "pop", (SUBR)setcnt, NULL, NULL, NULL, 2   },
+  { "count", S(COUNTER), IB,  "k", "o", (SUBR)count_init, (SUBR)count_perf },
+  CSOUND_DEPRECATED_OPCODE("count_i", "counti", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  { "count_i", S(COUNTER), IB,  "i", "o", (SUBR)count_init_perf, NULL, NULL, NULL, 2 },
+  CSOUND_DEPRECATED_OPCODE("cntCycles", "cntcycles", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  { "cntCycles", S(COUNTER), IB,  "k", "o", (SUBR)count_init, (SUBR)count_cycles, NULL, NULL, 2 },
+  CSOUND_DEPRECATED_OPCODE("cntRead", "cntread", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  { "cntRead", S(COUNTER), IB,  "k", "o", (SUBR)count_init, (SUBR)count_read, NULL, NULL, 2 },
+  CSOUND_DEPRECATED_OPCODE("cntReset", "cntreset", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  { "cntReset", S(COUNTER), IB,  "", "o", (SUBR)count_init0, (SUBR)count_reset, NULL, NULL, 2 },
+  CSOUND_DEPRECATED_OPCODE("cntState", "cntstate", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  { "cntState", S(CNTSTATE), IB,  "kkk", "o", (SUBR)count_init3, (SUBR)count_state, NULL, NULL, 2 },
+  CSOUND_DEPRECATED_OPCODE("cntDelete", "cntdelete", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  { "cntDelete", S(COUNTER), IB,  "k", "k", NULL, (SUBR)count_del, NULL, NULL, 2 },
+  CSOUND_DEPRECATED_OPCODE("cntDelete_i", "cntdeletei", ALIAS, "Renamed alias; maintain the shared implementation through its supported name.")
+  { "cntDelete_i", S(COUNTER), IB,  "i", "i", (SUBR)count_del, NULL, NULL, NULL, 2 },
+  /* aliases */
+  { "cntcreate", S(CNTSET), IB,  "i", "pop", (SUBR)setcnt, NULL, NULL   },
+  { "counti", S(COUNTER), IB,  "i", "o", (SUBR)count_init_perf, NULL },
+  { "cntcycles", S(COUNTER), IB,  "k", "o", (SUBR)count_init, (SUBR)count_cycles },
+  { "cntread", S(COUNTER), IB,  "k", "o", (SUBR)count_init, (SUBR)count_read },
+  { "cntreset", S(COUNTER), IB,  "", "o", (SUBR)count_init0, (SUBR)count_reset },
+  { "cntstate", S(CNTSTATE), IB,  "kkk", "o", (SUBR)count_init3, (SUBR)count_state },
+  { "cntdelete", S(COUNTER), IB,  "k", "k", NULL, (SUBR)count_del, NULL },
+  { "cntdeletei", S(COUNTER), IB,  "i", "i", (SUBR)count_del, NULL, NULL },
  };
 
 LINKAGE_BUILTIN(counter_localops)

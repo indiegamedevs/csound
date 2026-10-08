@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU Lesser General Public
  *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ *  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
  */
 
 /* $Id: mpadec_internal.h,v 1.1.1.1 2004/07/27 02:57:55 metal_man Exp $ */
@@ -39,20 +39,20 @@
 #define SCALE_BLOCK 12
 
 typedef struct {
-  MYFLT decwin[512 + 32];
-  MYFLT muls[27][64];
-  MYFLT gainpow2[256 + 122];
-  MYFLT ispow[8207];
-  MYFLT win[2][4][36];
-  MYFLT *istabs[3][2][2];
-  MYFLT tan1_1[16];
-  MYFLT tan2_1[16];
-  MYFLT tan1_2[16];
-  MYFLT tan2_2[16];
-  MYFLT pow1_1[2][16];
-  MYFLT pow2_1[2][16];
-  MYFLT pow1_2[2][16];
-  MYFLT pow2_2[2][16];
+  cs_float decwin[512 + 32];
+  cs_float muls[27][64];
+  cs_float gainpow2[256 + 122];
+  cs_float ispow[8207];
+  cs_float win[2][4][36];
+  cs_float *istabs[3][2][2];
+  cs_float tan1_1[16];
+  cs_float tan2_1[16];
+  cs_float tan1_2[16];
+  cs_float tan2_2[16];
+  cs_float pow1_1[2][16];
+  cs_float pow2_1[2][16];
+  cs_float pow1_2[2][16];
+  cs_float pow2_2[2][16];
   int32_t long_limit[9][23];
   int32_t short_limit[9][14];
   int32_t n_slen2[512];
@@ -134,8 +134,8 @@ typedef struct {
   uint32_t region1start;
   uint32_t region2start;
   uint32_t count1table_select;
-  MYFLT *full_gain[3];
-  MYFLT *pow2gain;
+  cs_float *full_gain[3];
+  cs_float *pow2gain;
 } grinfo_t;
 
 typedef struct {
@@ -171,9 +171,9 @@ struct mpadec_t {
   uint32_t decoded_samples;
   mp3tag_info_t tag_info;
   uint32_t synth_size;
-  MYFLT replay_gain;
-  void (*synth_func)(void *mpadec, MYFLT block[SBLIMIT],
-                     int channel, uint8_t *buffer);
+  cs_float replay_gain;
+  void (*synth_func)(void *mpadec, cs_float block[SBLIMIT],
+                     int32_t channel, uint8_t *buffer);
   uint32_t reservoir_size;
   uint8_t reservoir[2048];
   frameinfo_t frame;
@@ -182,10 +182,10 @@ struct mpadec_t {
   mpadec_tables_t tables;
   uint32_t synth_bufoffs;
   uint8_t hybrid_block[4];
-  MYFLT hybrid_in[2][SBLIMIT+1][SSLIMIT];
-  MYFLT hybrid_out[2][SSLIMIT+1][SBLIMIT];
-  MYFLT hybrid_buffers[2][2][SBLIMIT*SSLIMIT+SBLIMIT+SSLIMIT];
-  MYFLT synth_buffers[2][2][0x110];
+  cs_float hybrid_in[2][SBLIMIT+1][SSLIMIT];
+  cs_float hybrid_out[2][SSLIMIT+1][SBLIMIT];
+  cs_float hybrid_buffers[2][2][SBLIMIT*SSLIMIT+SBLIMIT+SSLIMIT];
+  cs_float synth_buffers[2][2][0x110];
 };
 
 struct mpabuffer_t {

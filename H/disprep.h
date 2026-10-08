@@ -17,32 +17,33 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
                         /*                                      DISPREP.H       */
+#pragma once
+
 #include "pstream.h"
 
 typedef struct {
         OPDS    h;
-        MYFLT   *iargs[VARGMAX];
+        cs_float   *iargs[VARGMAX];
 } PRINTV;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *signal, *iprd, *inprds, *iwtflg;
+        cs_float   *signal, *iprd, *inprds, *iwtflg;
         int32    npts, nprds, bufpts, totpts, pntcnt;
         WINDAT  dwindow;
-        MYFLT   *nxtp, *begp, *endp;
+        cs_float   *nxtp, *begp, *endp;
         AUXCH   auxch;
 } DSPLAY;
 
 typedef struct {
         OPDS    h;
         PVSDAT  *fin;
-        MYFLT   *points, *flag;
-        int     size;
+        cs_float   *points, *flag;
+        int32_t     size;
         WINDAT  dwindow;
         AUXCH   fdata;
         uint32  lastframe;
@@ -53,11 +54,11 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *signal, *iprd, *inpts, *ihann, *idbout, *iwtflg, *imin, *imax;
-        MYFLT   *sampbuf, *bufp, *endp, overN;
+        cs_float   *signal, *iprd, *inpts, *ihann, *idbout, *iwtflg, *imin, *imax;
+        cs_float   *sampbuf, *bufp, *endp, overN;
         int32   windsize, overlap, ncoefs;
-        int     hanning, dbout;
-        int     npts, start;
+        int32_t     hanning, dbout;
+        int32_t     npts, start;
         WINDAT  dwindow;
         AUXCH   auxch;
         AUXCH  smpbuf;
@@ -65,16 +66,16 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *kout,*kin,*iprd,*imindur,*imemdur,*ihp,*ithresh,*ihtim,*ixfdbak;
-        MYFLT   *istartempo,*ifn,*idisprd,*itweek;
-        int     countdown, timcount, npts, minlam, maxlam;
-        MYFLT   *hbeg, *hcur, *hend;
-        MYFLT   *xbeg, *xcur, *xend;
-        MYFLT   *stmemp, *linexp, *ftable, *xscale, *lmults;
+        cs_float   *kout,*kin,*iprd,*imindur,*imemdur,*ihp,*ithresh,*ihtim,*ixfdbak;
+        cs_float   *istartempo,*ifn,*idisprd,*itweek;
+        int32_t     countdown, timcount, npts, minlam, maxlam;
+        cs_float   *hbeg, *hcur, *hend;
+        cs_float   *xbeg, *xcur, *xend;
+        cs_float   *stmemp, *linexp, *ftable, *xscale, *lmults;
         int16   *lambdas;
-        MYFLT   *stmemnow, ncross, coef0, coef1, yt1, thresh;
-        MYFLT   fwdcoef, fwdmask, xfdbak, avglam, tempscal, tempo, tweek;
-        int     dcntdown, dtimcnt;
+        cs_float   *stmemnow, ncross, coef0, coef1, yt1, thresh;
+        cs_float   fwdcoef, fwdmask, xfdbak, avglam, tempscal, tempo, tweek;
+        int32_t     dcntdown, dtimcnt;
         WINDAT  dwindow;
         AUXCH   auxch;
 } TEMPEST;

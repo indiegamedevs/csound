@@ -18,11 +18,65 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"                 /*              MEMALLOC.C      */
+
+#ifdef CUSTOM_MALLOC
+#ifndef MALLOC_BASE
+#define MALLOC_BASE 0xC0000000  // STM32H7
+#endif
+
+static unsigned long cur = MALLOC_BASE;
+
+void *my_malloc(unsigned long bytes) {
+  unsigned long tmp = cur;
+  cur += bytes;
+  return (void *) tmp;
+}
+
+void *my_calloc(unsigned long items, unsigned long bytes) {
+  unsigned long tmp = cur;
+  cur += bytes*items;
+  memset((void *) tmp, 0, bytes*items);
+  return (void *) tmp;
+}
+
+void *my_realloc(void *old, unsigned long bytes) {
+    unsigned long tmp = cur;
+    cur += bytes;
+    memcpy((void *) tmp, old, bytes*items);
+    return (void *) tmp;
+}
+
+void my_free(void *old) {
+  // nothing to do
+  // TODO: implement freeing
+  return;
+}
+
+#define CS_MALLOC mymalloc
+#define CS_CALLOC mycalloc
+#define CS_REALLOC myrealloc
+#define CS_FREE myfree
+#define CS_ALIGNED_ALLOC(align,size) mycalloc(size, 1)
+#else
+#define CS_MALLOC malloc
+#define CS_CALLOC calloc
+#define CS_REALLOC realloc
+#define CS_FREE free
+
+#if defined(WIN32) || defined(ANDROID)
+#define CS_ALIGNED_ALLOC(size, align) calloc(size, 1)
+#else
+#if __STDC_VERSION__ >= 201112L
+#define CS_ALIGNED_ALLOC(size, align) aligned_alloc(align,size)
+#else
+#define CS_ALIGNED_ALLOC(size, align) calloc(size, 1)
+#endif
+#endif
+#endif
 
 /* This code wraps malloc etc with maintaining a list of allocated memory
    so it can be freed on a reset.  It would not be necessary with a zoned
@@ -39,40 +93,47 @@
 
 typedef struct memAllocBlock_s {
 #ifdef MEMDEBUG
-    int                     magic;      /* 0x6D426C6B ("mBlk")          */
+    int32_t                     magic;      /* 0x6D426C6B ("mBlk")          */
     void                    *ptr;       /* pointer to allocated area    */
 #endif
     struct memAllocBlock_s  *prv;       /* previous structure in chain  */
     struct memAllocBlock_s  *nxt;       /* next structure in chain      */
 } memAllocBlock_t;
+#ifdef ALIGN_MEMORY
+ #define MALIGN (sizeof(cs_float)-1)
+#else 
+ #define MALIGN 0
+#endif
 
-#define HDR_SIZE    (((int) sizeof(memAllocBlock_t) + 7) & (~7))
-#define ALLOC_BYTES(n)  ((size_t) HDR_SIZE + (size_t) (n))
-#define DATA_PTR(p) ((void*) ((unsigned char*) (p) + (int) HDR_SIZE))
-#define HDR_PTR(p)  ((memAllocBlock_t*) ((unsigned char*) (p) - (int) HDR_SIZE))
+#define HDR_SIZE    (((size_t) sizeof(memAllocBlock_t) + 7) & (~7))
+#define ALLOC_BYTES(n)  (((size_t) HDR_SIZE + (size_t) (n) + MALIGN) & (~ MALIGN))
+#define DATA_PTR(p) ((void*) ((unsigned char*) (p) + (int32_t) HDR_SIZE))
+#define HDR_PTR(p)  ((memAllocBlock_t*) ((unsigned char*) (p) - (int32_t) HDR_SIZE))
+#define ALIGN_BYTES(n,a)  (((size_t) (n) + (a-1)) & (~ (a-1)))
 
 #define MEMALLOC_DB (csound->memalloc_db)
 
 static void memdie(CSOUND *csound, size_t nbytes)
 {
-    csound->ErrorMsg(csound, Str("memory allocate failure for %zd"),
+    csound->ErrorMsg(csound, Str("memory allocate failure for %zd \n"),
                              nbytes);
     csound->LongJmp(csound, CSOUND_MEMORY);
 }
 
-void *mmalloc(CSOUND *csound, size_t size)
+void *csoundMalloc(CSOUND *csound, size_t size)
 {
     void  *p;
 
 #ifdef MEMDEBUG
     if (UNLIKELY(size == (size_t) 0)) {
       csound->DebugMsg(csound,
-              " *** internal error: mmalloc() called with zero nbytes\n");
+              " *** internal error: csoundMalloc() called with zero nbytes\n");
       return NULL;
     }
 #endif
     /* allocate memory */
-    if (UNLIKELY((p = malloc(ALLOC_BYTES(size))) == NULL)) {
+    if (UNLIKELY((p = CS_MALLOC(ALLOC_BYTES(size))) == NULL)) {
+        csound->ErrorMsg(csound, Str("Malloc failed: "));
         memdie(csound, size);     /* does a long jump */
     }
     /* link into chain */
@@ -91,14 +152,15 @@ void *mmalloc(CSOUND *csound, size_t size)
     return DATA_PTR(p);
 }
 
-void *mmallocDebug(CSOUND *csound, size_t size, char *file, int line)
+void *csoundMalloc_debug(CSOUND *csound, size_t size, char *file, int32_t line)
 {
-    void *ans = mmalloc(csound,size);
-    printf("Alloc %p (%zu) %s:%d\n", ans, size, file, line);
+    void *ans = csoundMalloc(csound,size);
+    csound->DebugMsg(csound, "Alloc %p (%zu) %s:%d\n", ans, size, file, line);
     return ans;
 }
 
-void *mcalloc(CSOUND *csound, size_t size)
+
+void *csoundCalloc(CSOUND *csound, size_t size)
 {
     void  *p;
 
@@ -110,7 +172,8 @@ void *mcalloc(CSOUND *csound, size_t size)
     }
 #endif
     /* allocate memory */
-    if (UNLIKELY((p = calloc(ALLOC_BYTES(size), (size_t) 1)) == NULL)) {
+    if (UNLIKELY((p = CS_CALLOC(ALLOC_BYTES(size), (size_t) 1)) == NULL)) {
+      csound->ErrorMsg(csound, Str("Calloc failed: "));
       memdie(csound, size);     /* does longjump */
     }
     /* link into chain */
@@ -129,35 +192,78 @@ void *mcalloc(CSOUND *csound, size_t size)
     return DATA_PTR(p);
 }
 
-void *mcallocDebug(CSOUND *csound, size_t size, char *file, int line)
+void *csoundCalloc_debug(CSOUND *csound, size_t size, char *file, int32_t line)
 {
-    void *ans = mcalloc(csound,size);
-    printf("Alloc %p (%zu) %s:%d\n", ans, size, file, line);
+    void *ans = csoundCalloc(csound,size);
+    csound->DebugMsg(csound, "Alloc %p (%zu) %s:%d\n", ans, size, file, line);
     return ans;
 }
 
+void *csoundCallocAligned(CSOUND *csound, size_t size, size_t align) {
+    void  *p;
 
-void mfree(CSOUND *csound, void *p)
+#ifdef MEMDEBUG
+    if (UNLIKELY(size == (size_t) 0)) {
+      csound->DebugMsg(csound,
+              " *** internal error: csound->Calloc() called with zero nbytes\n");
+      return NULL;
+    }
+#endif
+    /* allocate memory */
+    if (UNLIKELY((p = CS_ALIGNED_ALLOC(ALIGN_BYTES(size+HDR_SIZE,align), align)) == NULL)) {
+      csound->ErrorMsg(csound, Str("CallocAligned failed: "));
+      memdie(csound, size);     /* does longjump */
+    }
+    
+    memset(p,0,ALIGN_BYTES(size+HDR_SIZE,align));
+    /* link into chain */
+#ifdef MEMDEBUG
+    ((memAllocBlock_t*) p)->magic = MEMALLOC_MAGIC;
+    ((memAllocBlock_t*) p)->ptr = DATA_PTR(p);
+#endif
+    CSOUND_MEM_SPINLOCK
+    ((memAllocBlock_t*) p)->prv = (memAllocBlock_t*) NULL;
+    ((memAllocBlock_t*) p)->nxt = (memAllocBlock_t*) MEMALLOC_DB;
+    if (MEMALLOC_DB != NULL)
+      ((memAllocBlock_t*) MEMALLOC_DB)->prv = (memAllocBlock_t*) p;
+    MEMALLOC_DB = (void*) p;
+    CSOUND_MEM_SPINUNLOCK
+    /* return with data pointer */
+    return DATA_PTR(p);
+}
+
+
+
+void csoundFree(CSOUND *csound, void *p)
 {
     memAllocBlock_t *pp;
 
     if (UNLIKELY(p == NULL))
       return;
-    pp = HDR_PTR(p);
- #ifdef MEMDEBUG
-    if (UNLIKELY(pp->magic != MEMALLOC_MAGIC || pp->ptr != p)) {
-      csound->Warning(csound, "csound->Free() called with invalid "
-                      "pointer (%p) %x %p %x",
-                      p, pp->magic, pp->ptr, MEMALLOC_MAGIC);
-      /* exit() is ugly, but this is a fatal error that can only occur */
-      /* as a result of a bug */
-      /*  exit(-1);  */
-      /*VL 28-12-12 - returning from here instead of exit() */
+#ifdef MEMDEBUG
+    /* In debug builds, avoid touching freed headers: search the live list first */
+    memAllocBlock_t *cur;
+    pp = NULL;
+    CSOUND_MEM_SPINLOCK
+    cur = (memAllocBlock_t*) MEMALLOC_DB;
+    while (cur != NULL) {
+      if (cur->ptr == p) { pp = cur; break; }
+      cur = cur->nxt;
+    }
+    CSOUND_MEM_SPINUNLOCK
+    if (UNLIKELY(pp == NULL || pp->magic != MEMALLOC_MAGIC || pp->ptr != p)) {
+      if (pp != NULL && pp->magic != MEMALLOC_MAGIC) {
+        csound->Warning(csound, Str("csound->Free() called with corrupted pointer (%p)"),
+                        p);
+      }
       return;
     }
     pp->magic = 0;
- #endif
     CSOUND_MEM_SPINLOCK
+#else
+    pp = HDR_PTR(p);
+    CSOUND_MEM_SPINLOCK
+#endif
     /* unlink from chain */
     {
       memAllocBlock_t *prv = pp->prv, *nxt = pp->nxt;
@@ -168,33 +274,36 @@ void mfree(CSOUND *csound, void *p)
       else
         MEMALLOC_DB = (void*)nxt;
     }
-    //csound->Message(csound, "free\n");
     /* free memory */
-    free((void*) pp);
+    CS_FREE((void*) pp);
     CSOUND_MEM_SPINUNLOCK
 }
 
-void mfreeDebug(CSOUND *csound, void *ans, char *file, int line)
+void csoundFree_debug(CSOUND *csound, void *ans, char *file, int32_t line)
 {
     printf("Free %p %s:%d\n", ans, file, line);
-    mfree(csound,ans);
+    csoundFree(csound,ans);
 }
 
-void *mrealloc(CSOUND *csound, void *oldp, size_t size)
+void *csoundRealloc(CSOUND *csound, void *oldp, size_t size)
 {
     memAllocBlock_t *pp;
     void            *p;
 
     if (UNLIKELY(oldp == NULL))
-      return mmalloc(csound, size);
+      return csoundMalloc(csound, size);
     if (UNLIKELY(size == (size_t) 0)) {
-      mfree(csound, oldp);
+      csoundFree(csound, oldp);
       return NULL;
     }
     pp = HDR_PTR(oldp);
+    /* Keep the live list locked while realloc can move its block header.
+       Other threads must not follow the old links before we repair them. */
+    CSOUND_MEM_SPINLOCK
 #ifdef MEMDEBUG
     if (UNLIKELY(pp->magic != MEMALLOC_MAGIC || pp->ptr != oldp)) {
-      csound->DebugMsg(csound, " *** internal error: mrealloc() called with invalid "
+      CSOUND_MEM_SPINUNLOCK
+      csound->DebugMsg(csound, " *** internal error: csoundRealloc() called with invalid "
                       "pointer (%p)\n", oldp);
       /* exit() is ugly, but this is a fatal error that can only occur */
       /* as a result of a bug */
@@ -205,19 +314,18 @@ void *mrealloc(CSOUND *csound, void *oldp, size_t size)
     pp->ptr = NULL;
 #endif
     /* allocate memory */
-    p = realloc((void*) pp, ALLOC_BYTES(size));
+    p = CS_REALLOC((void*) pp, ALLOC_BYTES(size));
     if (UNLIKELY(p == NULL)) {
 #ifdef MEMDEBUG
-      CSOUND_MEM_SPINLOCK
       /* alloc failed, restore original header */
       pp->magic = MEMALLOC_MAGIC;
       pp->ptr = oldp;
-      CSOUND_MEM_SPINUNLOCK
 #endif
+      CSOUND_MEM_SPINUNLOCK
+      csound->ErrorMsg(csound, Str("Realloc failed: "));
       memdie(csound, size);
       return NULL;
     }
-    CSOUND_MEM_SPINLOCK
     /* create new header and update chain pointers */
     pp = (memAllocBlock_t*) p;
 #ifdef MEMDEBUG
@@ -238,14 +346,14 @@ void *mrealloc(CSOUND *csound, void *oldp, size_t size)
     return DATA_PTR(pp);
 }
 
-void *mreallocDebug(CSOUND *csound, void *oldp, size_t size, char *file, int line)
+void *csoundRealloc_debug(CSOUND *csound, void *oldp, size_t size, char *file, int32_t line)
 {
-    void *p = mrealloc(csound, oldp, size);
-    printf("Realloc %p->%p (%zu) %s:%d\n", oldp, p, size, file, line);
+    void *p = csoundRealloc(csound, oldp, size);
+    csound->DebugMsg(csound, "Realloc %p->%p (%zu) %s:%d\n", oldp, p, size, file, line);
     return p;
 }
 
-void memRESET(CSOUND *csound)
+void memreset(CSOUND *csound)
 {
     memAllocBlock_t *pp, *nxtp;
 
@@ -256,7 +364,7 @@ void memRESET(CSOUND *csound)
 #ifdef MEMDEBUG
       pp->magic = 0;
 #endif
-      free((void*) pp);
+      CS_FREE((void*) pp);
       pp = nxtp;
     }
 }

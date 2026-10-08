@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*    LOCSIG.H  */
@@ -30,19 +29,20 @@
 /******************************************/
 
 #include "stdopcod.h"
+#include "spatial_send.h"
 
 typedef struct {
     OPDS    h;
-    MYFLT   *r1, *r2, *r3, *r4, *asig, *degree, *distance, *reverbamount;
-    MYFLT   prev_degree, prev_distance, distr, distrsq;
-    MYFLT   ch1, ch2, ch3, ch4;
+    cs_float   *r1, *r2, *r3, *r4, *asig, *degree, *distance, *reverbamount;
+    cs_float   prev_degree, prev_distance, distr, distrsq;
+    cs_float   ch1, ch2, ch3, ch4;
     AUXCH   auxch;
-    MYFLT   *rrev1, *rrev2, *rrev3, *rrev4;
+    cs_float   *rrev1, *rrev2, *rrev3, *rrev4;
 } LOCSIG;
 
 typedef struct {
     OPDS    h;
-    MYFLT   *r1, *r2, *r3, *r4;
+    cs_float   *r1, *r2, *r3, *r4;
     LOCSIG  *locsig;
 } LOCSEND;
 

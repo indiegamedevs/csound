@@ -17,24 +17,25 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
+#pragma once
+#include "csound_types.h"
 
     typedef struct instr {
       struct instr *next;
       int n;                    /* self referencial */
       int largest;
-      double *p;
+      cs_double *p;
     } INSTR;
 
 extern INSTR *instr;
 extern int yyline;
 extern int last_note;
 extern int last_integer;
-extern double last_duration;
-extern double bpm;
+extern cs_double last_duration;
+extern cs_double bpm;
 extern int permeasure;
 extern int yydebug;
 extern int yyparse(void);

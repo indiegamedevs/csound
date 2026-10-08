@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_NEW_OPTS_H
@@ -47,7 +46,7 @@ void dump_cfg_variables(CSOUND *csound);
 /* be '-+NAME' for true, and '-+no-NAME' for false. */
 /* Return value is zero on success. */
 
-int parse_option_as_cfgvar(CSOUND *csound, const char *s);
+int32_t parse_option_as_cfgvar(CSOUND *csound, const char *s);
 
 #ifdef __cplusplus
 }

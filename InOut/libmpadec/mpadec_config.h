@@ -14,8 +14,10 @@
  *
  *  You should have received a copy of the GNU Lesser General Public
  *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ *  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
  */
+
+#pragma once
 
 /* Hardware architecture */
 //#define ARCH_ALPHA
@@ -26,14 +28,16 @@
 //#define ARCH_IA64
 
 #ifdef WIN32
+#ifndef HAVE_IO_H
 #define HAVE_IO_H
+#endif
+#ifndef HAVE_CONIO_H
 #define HAVE_CONIO_H
+#endif
 #undef OSS
-#else
-#define HAVE_INTTYPES_H
 #endif
 
-#define FLOAT MYFLT
+#define FLOAT cs_float
 
 #include "sysdep.h"
 
@@ -92,7 +96,9 @@ typedef uint32_t uintptr_t;
 #endif
 
 #ifdef WIN32
+#ifndef strcasecmp
 #define strcasecmp stricmp
+#endif
 #endif
 
 #ifndef M_PI

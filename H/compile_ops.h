@@ -17,23 +17,46 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
-#include <csoundCore.h>
+#pragma once
+
+#include "csoundCore.h"
+#include "aops.h"
 
 typedef struct _compile {
   OPDS h;
-  MYFLT *res;
-  MYFLT *str;
-  MYFLT *ktrig;
+  cs_float *res;
+  cs_float *str;
+  cs_float *ktrig;
 }COMPILE;
 
 typedef struct _retval {
   OPDS h;
-  MYFLT *ret;
+  cs_float *ret;
 } RETVAL;
+
+typedef struct rosc {
+  OPDS h;
+  cs_float *kstatus;
+  cs_float *out[32];
+  STRINGDAT *address, *type;
+} ROSC;
+
+typedef struct rosca {
+  OPDS h;
+  cs_float *kstatus;
+  ARRAYDAT *out;
+  STRINGDAT *address, *type;
+} ROSCA;
+
+typedef struct _cinstr {
+  OPDS h;
+  INSTREF *instr;
+  STRINGDAT *code;
+} CINSTR;
+
 
 int32_t compile_orc_i(CSOUND *csound, COMPILE *c);
 int32_t compile_str_i(CSOUND *csound, COMPILE *c);
@@ -43,3 +66,8 @@ int32_t eval_str_i(CSOUND *csound, COMPILE *p);
 int32_t eval_str_k(CSOUND *csound, COMPILE *p);
 int32_t retval_i(CSOUND *csound, RETVAL *p);
 int32_t eval_str_k(CSOUND *csound, COMPILE *p);
+int32_t readOSC_perf(CSOUND *csound, ROSC *p);
+int32_t readOSCarray_perf(CSOUND *csound, ROSCA *p);
+int32_t readOSCarray_init(CSOUND *csound, ROSCA *p);
+int32_t compile_instr(CSOUND *csound, CINSTR *p);
+

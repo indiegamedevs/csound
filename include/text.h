@@ -19,12 +19,12 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_TEXT_H
 #define CSOUND_TEXT_H
+#include "csound_types.h"
 #ifndef __GNUC__
 #  define  __attribute__(x)  /*NOTHING*/
 #endif
@@ -115,9 +115,9 @@ extern "C" {
   PUBLIC char *csoundLocalizeString(const char *s)
      __attribute__ ((format_arg (1)));
   PUBLIC char* cs_strtok_r(char* str, char* sep, char** lasts);
-  PUBLIC double cs_strtod(char* nptr, char** endptr);
-  PUBLIC int cs_sprintf(char *str, const char *format, ...);
-  PUBLIC int cs_sscanf(char *str, const char *format, ...);
+  PUBLIC cs_double csoundStrtod(char* nptr, char** endptr);
+  PUBLIC int32_t csoundSprintf(char *str, const char *format, ...);
+  PUBLIC int32_t csoundSscanf(char *str, const char *format, ...);
 #ifdef __cplusplus
 }
 #endif

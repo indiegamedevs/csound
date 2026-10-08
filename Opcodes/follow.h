@@ -17,18 +17,19 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*              Envelope follower by Paris Smaragdis                    */
 /*              Berklee College of Music Csound development team        */
 /*              Copyright (c) August 1994.  All rights reserved         */
 
+#pragma once
+
 typedef struct  {
         OPDS            h;
-        MYFLT           *out, *in, *len;
-        MYFLT           max, wgh;
+        cs_float           *out, *in, *len;
+        cs_float           max, wgh;
         int32           length;
         int32           count;
 } FOL;
@@ -36,6 +37,7 @@ typedef struct  {
 /* For implementation of Jot envelope follower -- JPff Feb 2000 */
 typedef struct {
         OPDS    h;
-        MYFLT   *out, *in, *attack, *release;
-        MYFLT   lastatt, lastrel, envelope, ga, gr;
+        cs_float   *out, *in, *attack, *release;
+        cs_float   lastatt, lastrel;
+        double  envelope, ga, gr;
 } ENV;

@@ -15,12 +15,12 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "std_util.h"
 
+#ifndef CSOUND_STATIC_UTILITIES
 /* Modified from BSD sources for strlcpy */
 /*
  * Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -55,9 +55,15 @@ strNcpy(char *dst, const char *src, size_t siz)
     return dst;        /* count does not include NUL */
 }
 
+#endif
+
 /* module interface */
 
-PUBLIC int32_t csoundModuleCreate(CSOUND *csound)
+#ifdef CSOUND_STATIC_UTILITIES
+ int32_t csoundInitUtilities(CSOUND *csound)
+#else
+ int32_t csoundModuleCreate(CSOUND *csound)
+#endif
 {
     int32_t   err = 0;
 
@@ -80,11 +86,14 @@ PUBLIC int32_t csoundModuleCreate(CSOUND *csound)
     err |= scale_init_(csound);
     err |= sndinfo_init_(csound);
     err |= srconv_init_(csound);
+    err |= smf_conv_init_(csound);
+    err |= mkir_init_(csound);
     return err;
 }
 
-PUBLIC int32_t csoundModuleInfo(void)
+#ifndef CSOUND_STATIC_UTILITIES
+ int32_t csoundModuleInfo(void)
 {
-    return ((CS_APIVERSION << 16) + (CS_APISUBVER << 8) + (int32_t) sizeof(MYFLT));
+  return CSOUND_MODULE_INFO;
 }
-
+#endif

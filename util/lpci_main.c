@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 /* ***************************************************************** */
 /* ******** Program to import lpanal files in tabular format. ****** */
@@ -32,9 +31,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
-#ifndef MYFLT
 #include "sysdep.h"
-#endif
 #include "lpc.h"
 
 #define Str(x) x
@@ -44,14 +41,14 @@ void lpc_import_usage(void)
     printf("Usage: lpc_import cstext_file lpc_file\n");
 }
 
-int main(int argc, char **argv)
+int32_t main(int32_t argc, char **argv)
 {
     FILE *inf;
     FILE *outf;
     LPHEADER hdr;
-    unsigned int i, j;
+    uint32_t i, j;
     char *str;
-    MYFLT *coef;
+    cs_float *coef;
 
     if (argc != 3) {
       lpc_import_usage();
@@ -94,13 +91,13 @@ int main(int argc, char **argv)
     for (i=0; i<hdr.headersize-sizeof(LPHEADER)+4; i++)
       putc(str[i],outf);
     putc('\n', outf);
-    coef = (MYFLT *)malloc(hdr.npoles*sizeof(MYFLT));
+    coef = (cs_float *)malloc(hdr.npoles*sizeof(cs_float));
     if (coef==NULL) {
       printf("memory allocation failure\n");
       exit(1);
     }
     for (i = 0; i<hdr.nvals; i++) {
-      if (hdr.npoles != fread(coef, sizeof(MYFLT), hdr.npoles, inf)) {
+      if (hdr.npoles != fread(coef, sizeof(cs_float), hdr.npoles, inf)) {
         printf("Ill formed data\n");
         exit(1);
       }

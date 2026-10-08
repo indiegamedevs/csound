@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef _3DUG_H_
@@ -49,8 +48,8 @@
 /*                               36, 24, 12, 1 };                        */
 
 typedef struct {
-    MYFLT left[256];  /* left and right will hold FFTed values of HRTFs */
-    MYFLT right[256];
+    cs_float left[256];  /* left and right will hold FFTed values of HRTFs */
+    cs_float right[256];
 } HRTF_DATUM;
 
 #endif

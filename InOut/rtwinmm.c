@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include <windows.h>
@@ -33,31 +32,32 @@
 typedef struct rtWinMMDevice_ {
     HWAVEIN   inDev;
     HWAVEOUT  outDev;
-    int       cur_buf;
-    int       nBuffers;
-    int       seed;             /* random seed for dithering */
-    int       enable_buf_timer;
+    int32_t       cur_buf;
+    int32_t       nBuffers;
+    int32_t       seed;             /* random seed for dithering */
+    int32_t       enable_buf_timer;
     /* playback sample conversion function */
-    void      (*playconv)(int, MYFLT*, void*, int*);
+    void      (*playconv)(int32_t, cs_float*, void*, int*);
     /* record sample conversion function */
-    void      (*rec_conv)(int, void*, MYFLT*);
+    void      (*rec_conv)(int32_t, void*, cs_float*);
     int64_t   prv_time;
     float     timeConv, bufTime;
+    HGLOBAL   bufferHandles[MAXBUFFERS];
     WAVEHDR   buffers[MAXBUFFERS];
 } rtWinMMDevice;
 
 typedef struct rtWinMMGlobals_ {
     rtWinMMDevice *inDev;
     rtWinMMDevice *outDev;
-    int           enable_buf_timer;
+    int32_t           enable_buf_timer;
 } rtWinMMGlobals;
 
 #define MBUFSIZE    1024
 
 typedef struct rtmidi_mme_globals_ {
     HMIDIIN             inDev;
-    int                 inBufWritePos;
-    int                 inBufReadPos;
+    int32_t                 inBufWritePos;
+    int32_t                 inBufReadPos;
     DWORD               inBuf[MBUFSIZE];
     CRITICAL_SECTION    threadLock;
 } RTMIDI_MME_GLOBALS;
@@ -72,7 +72,7 @@ static inline int64_t large_integer_to_int64(LARGE_INTEGER *p)
     return ((int64_t) p->LowPart + ((int64_t) p->HighPart << 32));
 }
 
-static int err_msg(CSOUND *csound, const char *fmt, ...)
+static int32_t err_msg(CSOUND *csound, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -81,12 +81,12 @@ static int err_msg(CSOUND *csound, const char *fmt, ...)
     return -1;
 }
 
-static int allocate_buffers(CSOUND *csound, rtWinMMDevice *dev,
+static int32_t allocate_buffers(CSOUND *csound, rtWinMMDevice *dev,
                                             const csRtAudioParams *parm,
-                                            int is_playback)
+                                            int32_t is_playback)
 {
     HGLOBAL ptr;
-    int     i, err = 0, bufFrames, bufSamples, bufBytes;
+    int32_t     i, err = 0, bufFrames, bufSamples, bufBytes;
 
     bufFrames = parm->bufSamp_SW;
     bufSamples = bufFrames * parm->nChannels;
@@ -107,14 +107,15 @@ static int allocate_buffers(CSOUND *csound, rtWinMMDevice *dev,
         return err_msg(csound, Str("memory allocation failure"));
       }
       dev->buffers[i].lpData = (LPSTR) GlobalLock(ptr);
+      dev->bufferHandles[i] = ptr;
       memset((void*) dev->buffers[i].lpData, 0, (size_t) bufBytes);
       dev->buffers[i].dwBufferLength = (DWORD) bufBytes;
       if (is_playback)
-        err = (int) waveOutPrepareHeader(dev->outDev,
+        err = (int32_t) waveOutPrepareHeader(dev->outDev,
                                          (LPWAVEHDR) &(dev->buffers[i]),
                                          sizeof(WAVEHDR));
       else
-        err = (int) waveInPrepareHeader(dev->inDev,
+        err = (int32_t) waveInPrepareHeader(dev->inDev,
                                         (LPWAVEHDR) &(dev->buffers[i]),
                                         sizeof(WAVEHDR));
       if (UNLIKELY(err != MMSYSERR_NOERROR))
@@ -124,10 +125,10 @@ static int allocate_buffers(CSOUND *csound, rtWinMMDevice *dev,
     return 0;
 }
 
-static int set_format_params(CSOUND *csound, WAVEFORMATEX *wfx,
+static int32_t set_format_params(CSOUND *csound, WAVEFORMATEX *wfx,
                                              const csRtAudioParams *parm)
 {
-    int sampsize = 4, framsize;
+    int32_t sampsize = 4, framsize;
     memset(wfx, 0, sizeof(WAVEFORMATEX));
     switch (parm->sampleFormat) {
       case AE_SHORT:
@@ -143,8 +144,8 @@ static int set_format_params(CSOUND *csound, WAVEFORMATEX *wfx,
     framsize = sampsize * parm->nChannels;
     wfx->wFormatTag = (WORD) (parm->sampleFormat == AE_FLOAT ? 3 : 1);
     wfx->nChannels = (WORD) parm->nChannels;
-    wfx->nSamplesPerSec = (DWORD) ((double) parm->sampleRate + 0.5);
-    wfx->nAvgBytesPerSec = (DWORD) ((int) wfx->nSamplesPerSec * framsize);
+    wfx->nSamplesPerSec = (DWORD) ((cs_double) parm->sampleRate + 0.5);
+    wfx->nAvgBytesPerSec = (DWORD) ((int32_t) wfx->nSamplesPerSec * framsize);
     wfx->nBlockAlign = (DWORD) framsize;
     wfx->wBitsPerSample = (DWORD) (sampsize << 3);
     return 0;
@@ -152,64 +153,64 @@ static int set_format_params(CSOUND *csound, WAVEFORMATEX *wfx,
 
 /* sample conversion routines for playback */
 
-static void MYFLT_to_short(int nSmps, MYFLT *inBuf, int16_t *outBuf, int *seed)
+static void CS_FLOAT_to_short(int32_t nSmps, cs_float *inBuf, int16_t *outBuf, int32_t *seed)
 {
-    MYFLT   tmp_f;
-    int     tmp_i;
-    int n;
+    cs_float   tmp_f;
+    int32_t     tmp_i;
+    int32_t n;
     for (n=0; n<nSmps; n++){
-      int rnd = (((*seed) * 15625) + 1) & 0xFFFF;
+      int32_t rnd = (((*seed) * 15625) + 1) & 0xFFFF;
       *seed = (((rnd) * 15625) + 1) & 0xFFFF;
       rnd += *seed;           /* triangular distribution */
-      tmp_f = (MYFLT) ((rnd>>1) - 0x8000) * (FL(1.0) / (MYFLT) 0x10000);
-      tmp_f += inBuf[n] * (MYFLT) 0x8000;
-      tmp_i = (int) MYFLT2LRND(tmp_f);
+      tmp_f = (cs_float) ((rnd>>1) - 0x8000) * (FL(1.0) / (cs_float) 0x10000);
+      tmp_f += inBuf[n] * (cs_float) 0x8000;
+      tmp_i = (int32_t) CS_FLOAT2LRND(tmp_f);
       if (tmp_i < -0x8000) tmp_i = -0x8000;
       if (tmp_i > 0x7FFF) tmp_i = 0x7FFF;
       outBuf[n] = (int16_t) tmp_i;
     }
 }
 
-static void MYFLT_to_short_u(int nSmps, MYFLT *inBuf, int16_t *outBuf, int *seed)
+static void CS_FLOAT_to_short_u(int32_t nSmps, cs_float *inBuf, int16_t *outBuf, int32_t *seed)
 {
-    MYFLT   tmp_f;
-    int     tmp_i;
-    int n;
+    cs_float   tmp_f;
+    int32_t     tmp_i;
+    int32_t n;
     for (n=0; n<nSmps; n++) {
-      int rnd = (((*seed) * 15625) + 1) & 0xFFFF;
+      int32_t rnd = (((*seed) * 15625) + 1) & 0xFFFF;
       *seed = rnd;
-      tmp_f = (MYFLT) (rnd - 0x8000) * (FL(1.0) / (MYFLT) 0x10000);
-      tmp_f += inBuf[n] * (MYFLT) 0x8000;
-      tmp_i = (int) MYFLT2LRND(tmp_f);
+      tmp_f = (cs_float) (rnd - 0x8000) * (FL(1.0) / (cs_float) 0x10000);
+      tmp_f += inBuf[n] * (cs_float) 0x8000;
+      tmp_i = (int32_t) CS_FLOAT2LRND(tmp_f);
       if (tmp_i < -0x8000) tmp_i = -0x8000;
       if (tmp_i > 0x7FFF) tmp_i = 0x7FFF;
       outBuf[n] = (int16_t) tmp_i;
     }
 }
 
-static void MYFLT_to_short_no_dither(int nSmps, MYFLT *inBuf,
-                                     int16_t *outBuf, int *seed)
+static void CS_FLOAT_to_short_no_dither(int32_t nSmps, cs_float *inBuf,
+                                     int16_t *outBuf, int32_t *seed)
 {
-    MYFLT   tmp_f;
-    int     tmp_i;
-    int n;
+    cs_float   tmp_f;
+    int32_t     tmp_i;
+    int32_t n;
     for (n=0; n<nSmps; n++){
-      tmp_f = inBuf[n] * (MYFLT) 0x8000;
-      tmp_i = (int) MYFLT2LRND(tmp_f);
+      tmp_f = inBuf[n] * (cs_float) 0x8000;
+      tmp_i = (int32_t) CS_FLOAT2LRND(tmp_f);
       if (tmp_i < -0x8000) tmp_i = -0x8000;
       if (tmp_i > 0x7FFF) tmp_i = 0x7FFF;
       outBuf[n] = (int16_t) tmp_i;
     }
 }
 
-static void MYFLT_to_long(int nSmps, MYFLT *inBuf, int32_t *outBuf, int *seed)
+static void CS_FLOAT_to_long(int32_t nSmps, cs_float *inBuf, int32_t *outBuf, int32_t *seed)
 {
-    MYFLT   tmp_f;
+    cs_float   tmp_f;
     int64_t tmp_i;
     (void) seed;
-    int n;
+    int32_t n;
     for (n=0; n<nSmps; n++) {
-      tmp_f = inBuf[n] * (MYFLT) 0x80000000UL;
+      tmp_f = inBuf[n] * (cs_float) 0x80000000UL;
       tmp_i = (int64_t) (tmp_f + (tmp_f < FL(0.0) ? FL(-0.5) : FL(0.5)));
       if (tmp_i < -((int64_t) 0x80000000UL))
         tmp_i = -((int64_t) 0x80000000UL);
@@ -218,44 +219,44 @@ static void MYFLT_to_long(int nSmps, MYFLT *inBuf, int32_t *outBuf, int *seed)
     }
 }
 
-static void MYFLT_to_float(int nSmps, MYFLT *inBuf, float *outBuf, int *seed)
+static void CS_FLOAT_to_float(int32_t nSmps, cs_float *inBuf, float *outBuf, int32_t *seed)
 {
     (void) seed;
-    int n;
+    int32_t n;
     for (n=0; n<nSmps; n++)
       outBuf[n] = (float) inBuf[n];
 }
 
 /* sample conversion routines for recording */
 
-static void short_to_MYFLT(int nSmps, int16_t *inBuf, MYFLT *outBuf)
+static void short_to_CS_FLOAT(int32_t nSmps, int16_t *inBuf, cs_float *outBuf)
 {
     while (nSmps--)
-      *(outBuf++) = (MYFLT) *(inBuf++) * (FL(1.0) / (MYFLT) 0x8000);
+      *(outBuf++) = (cs_float) *(inBuf++) * (FL(1.0) / (cs_float) 0x8000);
 }
 
-static void long_to_MYFLT(int nSmps, int32_t *inBuf, MYFLT *outBuf)
+static void long_to_CS_FLOAT(int32_t nSmps, int32_t *inBuf, cs_float *outBuf)
 {
-    int n;
+    int32_t n;
     for (n=0; n<nSmps; n++)
-      outBuf[n] = (MYFLT) inBuf[n] * (FL(1.0) / (MYFLT) 0x80000000UL);
+      outBuf[n] = (cs_float) inBuf[n] * (FL(1.0) / (cs_float) 0x80000000UL);
 }
 
-static void float_to_MYFLT(int nSmps, float *inBuf, MYFLT *outBuf)
+static void float_to_CS_FLOAT(int32_t nSmps, float *inBuf, cs_float *outBuf)
 {
-    int n;
+    int32_t n;
     for (n=0; n<nSmps; n++)
-      outBuf[n] = (MYFLT) inBuf[n];
+      outBuf[n] = (cs_float) inBuf[n];
 }
 
-static int open_device(CSOUND *csound,
-                       const csRtAudioParams *parm, int is_playback)
+static int32_t open_device(CSOUND *csound,
+                       const csRtAudioParams *parm, int32_t is_playback)
 {
     rtWinMMGlobals  *p;
     rtWinMMDevice   *dev;
     WAVEFORMATEX    wfx;
     LARGE_INTEGER   pp;
-    int             i, ndev, devNum, conv_idx;
+    int32_t             i, ndev, devNum, conv_idx;
     DWORD           openFlags = CALLBACK_NULL;
 
     if (UNLIKELY(parm->devName != NULL))
@@ -263,15 +264,15 @@ static int open_device(CSOUND *csound,
     if (set_format_params(csound, &wfx, parm) != 0)
       return -1;
     devNum = (parm->devNum == 1024 ? 0 : parm->devNum);
-    if (parm->sampleFormat != AE_FLOAT && ((int) GetVersion() & 0xFF) >= 0x05)
+    if (parm->sampleFormat != AE_FLOAT && ((int32_t) GetVersion() & 0xFF) >= 0x05)
       openFlags |= WAVE_FORMAT_DIRECT;
 
     if (is_playback) {
       WAVEOUTCAPSA  caps;
-      ndev = (int) waveOutGetNumDevs();
+      ndev = (int32_t) waveOutGetNumDevs();
       csound->Message(csound, Str("The available output devices are:\n"));
       for (i = 0; i < ndev; i++) {
-        waveOutGetDevCapsA((unsigned int) i, (LPWAVEOUTCAPSA) &caps,
+        waveOutGetDevCapsA((uint32_t) i, (LPWAVEOUTCAPSA) &caps,
                            sizeof(WAVEOUTCAPSA));
         csound->Message(csound, Str("%3d: %s\n"), i, (char*) caps.szPname);
       }
@@ -280,17 +281,17 @@ static int open_device(CSOUND *csound,
       if (UNLIKELY(devNum < 0 || devNum >= ndev)) {
         return err_msg(csound, Str("Device number is out of range"));
       }
-      waveOutGetDevCapsA((unsigned int) devNum, (LPWAVEOUTCAPSA) &caps,
+      waveOutGetDevCapsA((uint32_t) devNum, (LPWAVEOUTCAPSA) &caps,
                          sizeof(WAVEOUTCAPSA));
       csound->Message(csound, Str("winmm: opening output device %d (%s)\n"),
                               devNum, (char*) caps.szPname);
     }
     else {
       WAVEINCAPSA  caps;
-      ndev = (int) waveInGetNumDevs();
+      ndev = (int32_t) waveInGetNumDevs();
       csound->Message(csound, Str("The available input devices are:\n"));
       for (i = 0; i < ndev; i++) {
-        waveInGetDevCapsA((unsigned int) i, (LPWAVEINCAPSA) &caps,
+        waveInGetDevCapsA((uint32_t) i, (LPWAVEINCAPSA) &caps,
                           sizeof(WAVEINCAPSA));
         csound->Message(csound, Str("%3d: %s\n"), i, (char*) caps.szPname);
       }
@@ -299,7 +300,7 @@ static int open_device(CSOUND *csound,
       if (UNLIKELY(devNum < 0 || devNum >= ndev)) {
         return err_msg(csound, Str("device number is out of range"));
       }
-      waveInGetDevCapsA((unsigned int) devNum, (LPWAVEINCAPSA) &caps,
+      waveInGetDevCapsA((uint32_t) devNum, (LPWAVEINCAPSA) &caps,
                         sizeof(WAVEINCAPSA));
       csound->Message(csound, Str("winmm: opening input device %d (%s)\n"),
                       devNum, (char*) caps.szPname);
@@ -316,7 +317,7 @@ static int open_device(CSOUND *csound,
       p->outDev = dev;
      *(csound->GetRtPlayUserData(csound)) = (void*) dev;
       dev->enable_buf_timer = p->enable_buf_timer;
-      if (UNLIKELY(waveOutOpen((LPHWAVEOUT) &(dev->outDev), (unsigned int) devNum,
+      if (UNLIKELY(waveOutOpen((LPHWAVEOUT) &(dev->outDev), (uint32_t) devNum,
                                (LPWAVEFORMATEX) &wfx, 0, 0,
                                openFlags) != MMSYSERR_NOERROR)) {
         dev->outDev = (HWAVEOUT) 0;
@@ -326,18 +327,18 @@ static int open_device(CSOUND *csound,
         case 0:
           if (csound->GetDitherMode(csound)==1)
             dev->playconv =
-                  (void (*)(int, MYFLT*, void*, int*)) MYFLT_to_short;
+                  (void (*)(int32_t, cs_float*, void*, int*)) CS_FLOAT_to_short;
           else if (csound->GetDitherMode(csound)==2)
             dev->playconv =
-                  (void (*)(int, MYFLT*, void*, int*)) MYFLT_to_short_u;
+                  (void (*)(int32_t, cs_float*, void*, int*)) CS_FLOAT_to_short_u;
           else
             dev->playconv =
-                  (void (*)(int, MYFLT*, void*, int*)) MYFLT_to_short_no_dither;
+                  (void (*)(int32_t, cs_float*, void*, int*)) CS_FLOAT_to_short_no_dither;
           break;
         case 1: dev->playconv =
-                  (void (*)(int, MYFLT*, void*, int*)) MYFLT_to_long;   break;
+                  (void (*)(int32_t, cs_float*, void*, int*)) CS_FLOAT_to_long;   break;
         case 2: dev->playconv =
-                  (void (*)(int, MYFLT*, void*, int*)) MYFLT_to_float;  break;
+                  (void (*)(int32_t, cs_float*, void*, int*)) CS_FLOAT_to_float;  break;
       }
     }
     else {
@@ -345,7 +346,7 @@ static int open_device(CSOUND *csound,
       *(csound->GetRtRecordUserData(csound)) = (void*) dev;
       /* disable playback timer in full-duplex mode */
       dev->enable_buf_timer = p->enable_buf_timer = 0;
-      if (UNLIKELY(waveInOpen((LPHWAVEIN) &(dev->inDev), (unsigned int) devNum,
+      if (UNLIKELY(waveInOpen((LPHWAVEIN) &(dev->inDev), (uint32_t) devNum,
                               (LPWAVEFORMATEX) &wfx, 0, 0,
                               openFlags) != MMSYSERR_NOERROR)) {
         dev->inDev = (HWAVEIN) 0;
@@ -353,11 +354,11 @@ static int open_device(CSOUND *csound,
       }
       switch (conv_idx) {
         case 0: dev->rec_conv =
-                  (void (*)(int, void*, MYFLT*)) short_to_MYFLT;  break;
+                  (void (*)(int32_t, void*, cs_float*)) short_to_CS_FLOAT;  break;
         case 1: dev->rec_conv =
-                  (void (*)(int, void*, MYFLT*)) long_to_MYFLT;   break;
+                  (void (*)(int32_t, void*, cs_float*)) long_to_CS_FLOAT;   break;
         case 2: dev->rec_conv =
-                  (void (*)(int, void*, MYFLT*)) float_to_MYFLT;  break;
+                  (void (*)(int32_t, void*, cs_float*)) float_to_CS_FLOAT;  break;
       }
     }
     if (UNLIKELY(allocate_buffers(csound, dev, parm, is_playback) != 0))
@@ -374,27 +375,27 @@ static int open_device(CSOUND *csound,
 
 /* open for audio input */
 
-static int recopen_(CSOUND *csound, const csRtAudioParams *parm)
+static int32_t recopen_(CSOUND *csound, const csRtAudioParams *parm)
 {
     return open_device(csound, parm, 0);
 }
 
 /* open for audio output */
 
-static int playopen_(CSOUND *csound, const csRtAudioParams *parm)
+static int32_t playopen_(CSOUND *csound, const csRtAudioParams *parm)
 {
     return open_device(csound, parm, 1);
 }
 
 /* get samples from ADC */
 
-static int rtrecord_(CSOUND *csound, MYFLT *inBuf, int nbytes)
+static int32_t rtrecord_(CSOUND *csound, cs_float *inBuf, int32_t nbytes)
 {
     rtWinMMDevice   *dev = (rtWinMMDevice*) *(csound->GetRtRecordUserData(csound));
     WAVEHDR         *buf = &(dev->buffers[dev->cur_buf]);
     volatile DWORD  *dwFlags = &(buf->dwFlags);
 
-    dev->rec_conv(nbytes / (int) sizeof(MYFLT), (void*) buf->lpData, inBuf);
+    dev->rec_conv(nbytes / (int32_t) sizeof(cs_float), (void*) buf->lpData, inBuf);
     while (!(*dwFlags & WHDR_DONE))
       Sleep(1);
     waveInAddBuffer(dev->inDev, (LPWAVEHDR) buf, sizeof(WAVEHDR));
@@ -417,7 +418,7 @@ static int rtrecord_(CSOUND *csound, MYFLT *inBuf, int nbytes)
 /* eliminate MIDI jitter by requesting that both be made synchronous with */
 /* the above audio I/O blocks, i.e. by setting -b to some 1 or 2 K-prds.  */
 
-static void rtplay_(CSOUND *csound, const MYFLT *outBuf, int nbytes)
+static void rtplay_(CSOUND *csound, const cs_float *outBuf, int32_t nbytes)
 {
     rtWinMMDevice   *dev = (rtWinMMDevice*) *(csound->GetRtPlayUserData(csound));
     WAVEHDR         *buf = &(dev->buffers[dev->cur_buf]);
@@ -425,12 +426,12 @@ static void rtplay_(CSOUND *csound, const MYFLT *outBuf, int nbytes)
     LARGE_INTEGER   pp;
     int64_t         curTime;
     float           timeDiff, timeWait;
-    int             i, nbufs;
+    int32_t             i, nbufs;
 
     while (!(*dwFlags & WHDR_DONE))
       Sleep(1);
-    dev->playconv(nbytes / (int) sizeof(MYFLT),
-                  (MYFLT*) outBuf, (void*) buf->lpData, &(dev->seed));
+    dev->playconv(nbytes / (int32_t) sizeof(cs_float),
+                  (cs_float*) outBuf, (void*) buf->lpData, &(dev->seed));
     waveOutWrite(dev->outDev, (LPWAVEHDR) buf, sizeof(WAVEHDR));
     if (++(dev->cur_buf) >= dev->nBuffers)
       dev->cur_buf = 0;
@@ -451,7 +452,7 @@ static void rtplay_(CSOUND *csound, const MYFLT *outBuf, int nbytes)
     timeWait = dev->bufTime;
     timeWait *= (((float) nbufs / (float) dev->nBuffers) * 0.25f + 0.875f);
     timeWait -= timeDiff;
-    i = MYFLT2LRND(timeWait);
+    i = CS_FLOAT2LRND(timeWait);
     if (i > 0)
       Sleep((DWORD) i);
 }
@@ -460,7 +461,7 @@ static void rtclose_(CSOUND *csound)
 {
     rtWinMMGlobals  *pp;
     rtWinMMDevice   *inDev, *outDev;
-    int             i;
+    int32_t             i;
 
     *(csound->GetRtPlayUserData(csound))  = NULL;
     *(csound->GetRtRecordUserData(csound))  = NULL;
@@ -477,23 +478,39 @@ static void rtclose_(CSOUND *csound)
       for (i = 0; i < inDev->nBuffers; i++) {
         waveInUnprepareHeader(inDev->inDev, (LPWAVEHDR) &(inDev->buffers[i]),
                               sizeof(WAVEHDR));
-        GlobalUnlock((HGLOBAL) inDev->buffers[i].lpData);
-        GlobalFree((HGLOBAL) inDev->buffers[i].lpData);
+        GlobalUnlock(inDev->bufferHandles[i]);
+        GlobalFree(inDev->bufferHandles[i]);
       }
       waveInClose(inDev->inDev);
       csound->Free(csound,inDev);
     }
     if (outDev != NULL) {
-      volatile DWORD  *dwFlags = &(outDev->buffers[outDev->cur_buf].dwFlags);
-      while (!(*dwFlags & WHDR_DONE))
+      int32_t waitMs = CS_FLOAT2LRND(outDev->bufTime * outDev->nBuffers) + 50;
+      int32_t pending;
+      if (waitMs < 50)
+        waitMs = 50;
+      if (waitMs > 2000)
+        waitMs = 2000;
+      do {
+        pending = 0;
+        for (i = 0; i < outDev->nBuffers; i++) {
+          if (!(outDev->buffers[i].dwFlags & WHDR_DONE)) {
+            pending = 1;
+            break;
+          }
+        }
+        if (!pending)
+          break;
         Sleep(1);
-      waveOutReset(outDev->outDev);
+      } while (--waitMs > 0);
+      if (pending)
+        waveOutReset(outDev->outDev);
       for (i = 0; i < outDev->nBuffers; i++) {
         waveOutUnprepareHeader(outDev->outDev,
                                (LPWAVEHDR) &(outDev->buffers[i]),
                                sizeof(WAVEHDR));
-        GlobalUnlock((HGLOBAL) outDev->buffers[i].lpData);
-        GlobalFree((HGLOBAL) outDev->buffers[i].lpData);
+        GlobalUnlock(outDev->bufferHandles[i]);
+        GlobalFree(outDev->bufferHandles[i]);
       }
       waveOutClose(outDev->outDev);
       csound->Free(csound,outDev);
@@ -504,7 +521,7 @@ static void CALLBACK midi_in_handler(HMIDIIN hmin, UINT wMsg, DWORD_PTR dwInstan
                                      DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
     RTMIDI_MME_GLOBALS  *p = (RTMIDI_MME_GLOBALS*) dwInstance;
-    int                 new_pos;
+    int32_t                 new_pos;
 
     (void) hmin;
     (void) dwParam2;
@@ -519,14 +536,14 @@ static void CALLBACK midi_in_handler(HMIDIIN hmin, UINT wMsg, DWORD_PTR dwInstan
     LeaveCriticalSection(&(p->threadLock));
 }
 
-static int midi_in_open(CSOUND *csound, void **userData, const char *devName)
+static int32_t midi_in_open(CSOUND *csound, void **userData, const char *devName)
 {
-  int                 i, ndev, devnum = 0;
+  int32_t                 i, ndev, devnum = 0;
     RTMIDI_MME_GLOBALS  *p;
     MIDIINCAPS          caps;
 
     *userData = NULL;
-    ndev = (int) midiInGetNumDevs();
+    ndev = (int32_t) midiInGetNumDevs();
     if (UNLIKELY(ndev < 1)) {
       csound->ErrorMsg(csound, Str("rtmidi: no input devices are available"));
       return -1;
@@ -538,11 +555,11 @@ static int midi_in_open(CSOUND *csound, void **userData, const char *devName)
                                      "not a name"));
         return -1;
       }
-      devnum = (int) atoi(devName);
+      devnum = (int32_t) atoi(devName);
     }
     csound->Message(csound, Str("The available MIDI input devices are:\n"));
     for (i = 0; i < ndev; i++) {
-      midiInGetDevCaps((unsigned int) i, &caps, sizeof(MIDIINCAPS));
+      midiInGetDevCaps((uint32_t) i, &caps, sizeof(MIDIINCAPS));
       csound->Message(csound, "%3d: %s\n", i, &(caps.szPname[0]));
     }
     if (UNLIKELY(devnum < 0 || devnum >= ndev)) {
@@ -558,10 +575,10 @@ static int midi_in_open(CSOUND *csound, void **userData, const char *devName)
     }
     InitializeCriticalSection(&(p->threadLock));
     *userData = (void*) p;
-    midiInGetDevCaps((unsigned int) devnum, &caps, sizeof(MIDIINCAPS));
+    midiInGetDevCaps((uint32_t) devnum, &caps, sizeof(MIDIINCAPS));
     csound->Message(csound, Str("Opening MIDI input device %d (%s)\n"),
                             devnum, &(caps.szPname[0]));
-    if (midiInOpen(&(p->inDev), (unsigned int) devnum,
+    if (midiInOpen(&(p->inDev), (uint32_t) devnum,
                    (DWORD_PTR) midi_in_handler, (DWORD_PTR) p, CALLBACK_FUNCTION)
         != MMSYSERR_NOERROR) {
       p->inDev = (HMIDIIN) 0;
@@ -573,23 +590,23 @@ static int midi_in_open(CSOUND *csound, void **userData, const char *devName)
     return 0;
 }
 
-static int midi_in_read(CSOUND *csound,
-                        void *userData, unsigned char *buf, int nbytes)
+static int32_t midi_in_read(CSOUND *csound,
+                        void *userData, unsigned char *buf, int32_t nbytes)
 {
     RTMIDI_MME_GLOBALS  *p = (RTMIDI_MME_GLOBALS*) userData;
-    unsigned int        tmp;
+    uint32_t        tmp;
     unsigned char       s, d1, d2, len;
-    int                 nread = 0;
+    int32_t                 nread = 0;
 
     (void) csound;
     EnterCriticalSection(&(p->threadLock));
     while (p->inBufReadPos != p->inBufWritePos) {
-      tmp = (unsigned int) p->inBuf[p->inBufReadPos++];
+      tmp = (uint32_t) p->inBuf[p->inBufReadPos++];
       p->inBufReadPos &= (MBUFSIZE - 1);
       s = (unsigned char) tmp; tmp >>= 8;
       d1 = (unsigned char) tmp; tmp >>= 8;
       d2 = (unsigned char) tmp;
-      len = msg_bytes[(int) s >> 3];
+      len = msg_bytes[(int32_t) s >> 3];
       if (nread + len > nbytes)
         break;
       if (len) {
@@ -606,7 +623,7 @@ static int midi_in_read(CSOUND *csound,
     return nread;
 }
 
-static int midi_in_close(CSOUND *csound, void *userData)
+static int32_t midi_in_close(CSOUND *csound, void *userData)
 {
     RTMIDI_MME_GLOBALS  *p = (RTMIDI_MME_GLOBALS*) userData;
 
@@ -624,14 +641,14 @@ static int midi_in_close(CSOUND *csound, void *userData)
     return 0;
 }
 
-static int midi_out_open(CSOUND *csound, void **userData, const char *devName)
+static int32_t midi_out_open(CSOUND *csound, void **userData, const char *devName)
 {
-    int         i, ndev, devnum = 0;
+    int32_t         i, ndev, devnum = 0;
     MIDIOUTCAPS caps;
     HMIDIOUT    outDev = (HMIDIOUT) 0;
 
     *userData = NULL;
-    ndev = (int) midiOutGetNumDevs();
+    ndev = (int32_t) midiOutGetNumDevs();
     if (UNLIKELY(ndev < 1)) {
       csound->ErrorMsg(csound, Str("rtmidi: no output devices are available"));
       return -1;
@@ -643,11 +660,11 @@ static int midi_out_open(CSOUND *csound, void **userData, const char *devName)
                                      "not a name"));
         return -1;
       }
-      devnum = (int) atoi(devName);
+      devnum = (int32_t) atoi(devName);
     }
     csound->Message(csound, Str("The available MIDI output devices are:\n"));
     for (i = 0; i < ndev; i++) {
-      midiOutGetDevCaps((unsigned int) i, &caps, sizeof(MIDIOUTCAPS));
+      midiOutGetDevCaps((uint32_t) i, &caps, sizeof(MIDIOUTCAPS));
       csound->Message(csound, "%3d: %s\n", i, &(caps.szPname[0]));
     }
     if (UNLIKELY(devnum < 0 || devnum >= ndev)) {
@@ -655,10 +672,10 @@ static int midi_out_open(CSOUND *csound, void **userData, const char *devName)
                        Str("rtmidi: output device number is out of range"));
       return -1;
     }
-    midiOutGetDevCaps((unsigned int) devnum, &caps, sizeof(MIDIOUTCAPS));
+    midiOutGetDevCaps((uint32_t) devnum, &caps, sizeof(MIDIOUTCAPS));
     csound->Message(csound, Str("Opening MIDI output device %d (%s)\n"),
                             devnum, &(caps.szPname[0]));
-    if (UNLIKELY(midiOutOpen(&outDev, (unsigned int) devnum,
+    if (UNLIKELY(midiOutOpen(&outDev, (uint32_t) devnum,
                              (DWORD) 0, (DWORD) 0,
                              CALLBACK_NULL) != MMSYSERR_NOERROR)) {
       csound->ErrorMsg(csound, Str("rtmidi: could not open output device"));
@@ -669,29 +686,29 @@ static int midi_out_open(CSOUND *csound, void **userData, const char *devName)
     return 0;
 }
 
-static int midi_out_write(CSOUND *csound,
-                          void *userData, const unsigned char *buf, int nbytes)
+static int32_t midi_out_write(CSOUND *csound,
+                          void *userData, const unsigned char *buf, int32_t nbytes)
 {
     HMIDIOUT        outDev = (HMIDIOUT) userData;
-    unsigned int    tmp;
+    uint32_t    tmp;
     unsigned char   s, len;
-    int             pos = 0;
+    int32_t             pos = 0;
 
     (void) csound;
     while (pos < nbytes) {
       s = buf[pos++];
-      len = msg_bytes[(int) s >> 3];
+      len = msg_bytes[(int32_t) s >> 3];
       if (!len)
         continue;
-      tmp = (unsigned int) s;
+      tmp = (uint32_t) s;
       if (--len) {
         if (pos >= nbytes)
           break;
-        tmp |= ((unsigned int) buf[pos++] << 8);
+        tmp |= ((uint32_t) buf[pos++] << 8);
         if (--len) {
           if (pos >= nbytes)
             break;
-          tmp |= ((unsigned int) buf[pos++] << 16);
+          tmp |= ((uint32_t) buf[pos++] << 16);
         }
       }
       midiOutShortMsg(outDev, (DWORD) tmp);
@@ -700,7 +717,7 @@ static int midi_out_write(CSOUND *csound,
     return pos;
 }
 
-static int midi_out_close(CSOUND *csound, void *userData)
+static int32_t midi_out_close(CSOUND *csound, void *userData)
 {
     (void) csound;
     if (userData != NULL) {
@@ -714,13 +731,13 @@ static int midi_out_close(CSOUND *csound, void *userData)
 
 /* module interface functions */
 
-PUBLIC int csoundModuleCreate(CSOUND *csound)
+ int32_t csoundModuleCreate(CSOUND *csound)
 {
     rtWinMMGlobals  *pp;
-    OPARMS oparms;
-     csound->GetOParms(csound, &oparms);
+   const OPARMS *O;
+     O = csound->GetOParms(csound) ;
 
-    if (UNLIKELY(oparms.msglevel & 0x400))
+    if (UNLIKELY(O->msglevel & 0x400))
       csound->Message(csound, Str("Windows MME real time audio and MIDI module "
                                   "for Csound by Istvan Varga\n"));
 
@@ -739,11 +756,11 @@ PUBLIC int csoundModuleCreate(CSOUND *csound)
                 "in MME sound output (default: on)", NULL));
 }
 
-static CS_NOINLINE int check_name(const char *s)
+static CS_NOINLINE int32_t check_name(const char *s)
 {
     if (s != NULL) {
       char  buf[8];
-      int   i = 0;
+      int32_t   i = 0;
       do {
         buf[i] = s[i] | (char) 0x20;
         i++;
@@ -755,10 +772,10 @@ static CS_NOINLINE int check_name(const char *s)
     return 0;
 }
 
-PUBLIC int csoundModuleInit(CSOUND *csound)
+ int32_t csoundModuleInit(CSOUND *csound)
 {
     if (check_name((char*) csound->QueryGlobalVariable(csound, "_RTAUDIO"))) {
-      csound->Message(csound, Str("rtaudio: WinMM module enabled\n"));
+      csound->DebugMsg(csound, Str("rtaudio: WinMM module enabled\n"));
       csound->SetPlayopenCallback(csound, playopen_);
       csound->SetRecopenCallback(csound, recopen_);
       csound->SetRtplayCallback(csound, rtplay_);
@@ -766,7 +783,7 @@ PUBLIC int csoundModuleInit(CSOUND *csound)
       csound->SetRtcloseCallback(csound, rtclose_);
     }
     if (check_name((char*) csound->QueryGlobalVariable(csound, "_RTMIDI"))) {
-      csound->Message(csound, Str("rtmidi: WinMM module enabled\n"));
+      csound->DebugMsg(csound, Str("rtmidi: WinMM module enabled\n"));
       csound->SetExternalMidiInOpenCallback(csound, midi_in_open);
       csound->SetExternalMidiReadCallback(csound, midi_in_read);
       csound->SetExternalMidiInCloseCallback(csound, midi_in_close);
@@ -777,7 +794,7 @@ PUBLIC int csoundModuleInit(CSOUND *csound)
     return 0;
 }
 
-PUBLIC int csoundModuleInfo(void)
+ int32_t csoundModuleInfo(void)
 {
-    return ((CS_APIVERSION << 16) + (CS_APISUBVER << 8) + (int) sizeof(MYFLT));
+  return CSOUND_MODULE_INFO;
 }

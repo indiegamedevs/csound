@@ -1,6 +1,5 @@
 /*
     ugrw1.h:
-
     Copyright (C) 1997 Robin Whittle
 
     This file is part of Csound.
@@ -17,8 +16,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
                                                         /*      UGRW1.H */
@@ -43,6 +41,8 @@
  * clearly indicated as such.
  */
 
+#pragma once
+
 #include "csoundCore.h"
 
 /*
@@ -54,15 +54,15 @@
 
 typedef struct {
         OPDS    h;
-        MYFLT   *xsig;          /* Input value to write to table. */
-        MYFLT   *xndx;          /* Index into the table where want to write */
-        MYFLT   *xfn;           /* Number of table we are writing to. */
-        MYFLT   *ixmode;        /* Index mode (optional parm).
+        cs_float   *xsig;          /* Input value to write to table. */
+        cs_float   *xndx;          /* Index into the table where want to write */
+        cs_float   *xfn;           /* Number of table we are writing to. */
+        cs_float   *ixmode;        /* Index mode (optional parm).
                                  * 0 --> Use raw xfn and ixoff.
                                  * 1 --> Use these with a range of 0 to 1 for
                                  * the entire range of the table. */
-        MYFLT   *ixoff;         /* Offset (opt). Fixed value to add to ndx*/
-        MYFLT   *iwgmode;       /* Wrap and guard point mode (optional)
+        cs_float   *ixoff;         /* Offset (opt). Fixed value to add to ndx*/
+        cs_float   *iwgmode;       /* Wrap and guard point mode (optional)
                                  *      0 --> Limit indx to between 0 table len
                                  *      1 --> Index wraps around modulo len
                                  *      2 --> Write with 0.5 step offset, and
@@ -75,8 +75,8 @@ typedef struct {
                                  * length by tblwset() depending on ixmode.
                                  */
         int32    xbmul;          /* Internal variable for iwrap and igmode. */
-        int     iwgm;           /* Internal variable for offset. */
-        MYFLT   offset;         /* Pointer to data structure used to access
+        int32_t     iwgm;           /* Internal variable for offset. */
+        cs_float   offset;         /* Pointer to data structure used to access
                                  * function table. tblwset() writes this, based
                                  * on the value of xfn.
                                  */
@@ -88,8 +88,8 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *kout;          /* Output pointer */
-        MYFLT   *xfn;           /* Points to the number of the table. */
+        cs_float   *kout;          /* Output pointer */
+        cs_float   *xfn;           /* Points to the number of the table. */
 } TABLENG;
 
 /* TABLEGPW data structure used by function tablegpw to write the
@@ -97,19 +97,19 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *xfn;           /* Points to number of table. */
+        cs_float   *xfn;           /* Points to number of table. */
 } TABLEGPW;
 
 /* TABLEMIX data structure used by function tablemix. */
 
 typedef struct {
         OPDS    h;
-        MYFLT   *dft, *doff, *len, *s1ft, *s1off, *s1g, *s2ft, *s2off, *s2g;
+        cs_float   *dft, *doff, *len, *s1ft, *s1off, *s1g, *s2ft, *s2off, *s2g;
 
         /* Storage to remember what the table numbers were from a previous k
            cycle, and to store pointers to their FUNC data structures. */
-        int     pdft;           /* Previous destination */
-        int     ps1ft, ps2ft;   /* source function table numbers. */
+        int32_t     pdft;           /* Previous destination */
+        int32_t     ps1ft, ps2ft;   /* source function table numbers. */
         FUNC    *funcd, *funcs1, *funcs2;
 } TABLEMIX;
 
@@ -117,13 +117,13 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *dft;           /* Destination function table number. */
-        MYFLT   *sft;           /* Source function table number */
+        cs_float   *dft;           /* Destination function table number. */
+        cs_float   *sft;           /* Source function table number */
 
         /* Storage to remember what the table numbers were from a previous k
            cycle, and to store pointers to their FUNC data structures. */
-        int     pdft;           /* Previous destination */
-        int     psft;           /* source function table numbers. */
+        int32_t     pdft;           /* Previous destination */
+        int32_t     psft;           /* source function table numbers. */
         FUNC    *funcd, *funcs;
 } TABLECOPY;
 
@@ -131,10 +131,10 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *adest;         /* A rate destination */
-        MYFLT   *kfn;           /* Number of table read */
-        MYFLT   *kstart;        /* Index mode within table */
-        MYFLT   *koff;          /* Offset to add to table index */
+        cs_float   *adest;         /* A rate destination */
+        cs_float   *kfn;           /* Number of table read */
+        cs_float   *kstart;        /* Index mode within table */
+        cs_float   *koff;          /* Offset to add to table index */
 
         /* Internal variable for previous state of xfn. */
         int32    pfn;            /* Pointer to function table data structure */
@@ -145,15 +145,15 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *kstart;        /* Index mode within table we start reading.
+        cs_float   *kstart;        /* Index mode within table we start reading.
                                  * Note this is also an input argument.  First
                                  * we read it to determine where we should start
                                  * writing the a rate samples. When we have
                                  * finished we write to it the number of the
                                  * next location which should be written. */
-        MYFLT   *kfn;           /* Number of table we are reading from. */
-        MYFLT   *asig;          /* a rate input signal. */
-        MYFLT   *koff;          /* Offset to add to table index. */
+        cs_float   *kfn;           /* Number of table we are reading from. */
+        cs_float   *asig;          /* a rate input signal. */
+        cs_float   *koff;          /* Offset to add to table index. */
 
         int32    pfn;            /* Pointer to function table. */
         FUNC    *ftp;
@@ -167,8 +167,8 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *rslt;
-        int32    instartk;
+        cs_float   *rslt;
+        uint64_t    instartk;
 } RDTIME;
 
 /*****************************************************************************/
@@ -176,23 +176,23 @@ typedef struct {
         /* PRINTK data structure for printk() and printkset(). */
 typedef struct {
         OPDS    h;
-        MYFLT   *ptime;         /* How much time to leave between each print*/
-        MYFLT   *val;           /* Value to print */
-        MYFLT   *space;         /* Spaces to insert before printing */
-        MYFLT   *named;
-        MYFLT   printat, ctime; /* Time when initialised; initialised */
+        cs_float   *ptime;         /* How much time to leave between each print*/
+        cs_float   *val;           /* Value to print */
+        cs_float   *space;         /* Spaces to insert before printing */
+        cs_float   *named;
+        cs_float   printat, ctime; /* Time when initialised; initialised */
         int32   pspace;         /* How many spaces to print */
-        int     initialised;    /* Non zero for initialised */
+        int32_t     initialised;    /* Non zero for initialised */
 } PRINTK;
 
 /* PRINTKS data structure for printks() and printksset()  */
 typedef struct {
         OPDS    h;
-        MYFLT   *ifilcod;       /* File name */
-        MYFLT   *ptime;         /* How much time to leave between each print */
-        MYFLT   *kvals[VARGMAX-2];/* values to print */
-        MYFLT   printat, ctime; /* Time when initialised; Cycle time */
-        int     initialised;
+        cs_float   *ifilcod;       /* File name */
+        cs_float   *ptime;         /* How much time to leave between each print */
+        cs_float   *kvals[VARGMAX-2];/* values to print */
+        cs_float   printat, ctime; /* Time when initialised; Cycle time */
+        int32_t     initialised;
         char    txtstring[8192]; /* Place to store the string printed */
         char* old;
 } PRINTKS;
@@ -200,50 +200,50 @@ typedef struct {
 /* an i-rate-only prints */
 typedef struct {
         OPDS    h;
-        MYFLT   *ifilcod;       /* File name */
-        MYFLT   *kvals[VARGMAX-1];/* values to print */
+        cs_float   *ifilcod;       /* File name */
+        cs_float   *kvals[VARGMAX-1];/* values to print */
 } PRINTS;
 /*****************************************************************************/
 
 /* PEAK data structure for peakk() and peaka(). */
 typedef struct {
         OPDS    h;
-        MYFLT   *kpeakout;      /* Pointer to k or a rate input variable. */
-        MYFLT   *xsigin;        /* Pointer to k rate input variable which,
+        cs_float   *kpeakout;      /* Pointer to k or a rate input variable. */
+        cs_float   *xsigin;        /* Pointer to k rate input variable which,
                                  * if set to no zero, causes the ugen to
                                  * clear the accumulator.        */
 } PEAK;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *val, *space, *named;
-        MYFLT   oldvalue;
+        cs_float   *val, *space, *named;
+        cs_float   oldvalue;
         int32_t pspace;
 } PRINTK2;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *iformat;
-        MYFLT   *val;
-        MYFLT   oldvalue;
+        cs_float   *iformat;
+        cs_float   *val;
+        cs_float   oldvalue;
         char    *sarg;
 } PRINTK3;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *ndx;
-        MYFLT   *dummy, dummy1;
+        cs_float   *ndx;
+        cs_float   *dummy, dummy1;
 } IOZ;
 
-int instimek(CSOUND*,RDTIME *p);
-int instimes(CSOUND*,RDTIME *p);
-int instimset(CSOUND*,RDTIME *p);
+int32_t instimek(CSOUND*,RDTIME *p);
+int32_t instimes(CSOUND*,RDTIME *p);
+int32_t instimset(CSOUND*,RDTIME *p);
 
-int eventcycles(CSOUND*,RDTIME *p);
-int eventtime(CSOUND*,RDTIME *p);
+int32_t eventcycles(CSOUND*,RDTIME *p);
+int32_t eventtime(CSOUND*,RDTIME *p);
 
-int elapsedcycles(CSOUND*,RDTIME *p);
-int elapsedtime(CSOUND*,RDTIME *p);
+int32_t elapsedcycles(CSOUND*,RDTIME *p);
+int32_t elapsedtime(CSOUND*,RDTIME *p);
 
 
 //int itablecopy(CSOUND*,TABLECOPY *p);
@@ -253,20 +253,20 @@ int elapsedtime(CSOUND*,RDTIME *p);
 //int itablew(CSOUND*,TABLEW *p);
 //int ktablew(CSOUND*,TABLEW   *p);
 //int ktablewkt(CSOUND*,TABLEW *p);
-int peaka(CSOUND*,PEAK *p);
-int peakk(CSOUND*,PEAK *p);
-int printk(CSOUND*,PRINTK *p);
-int printk2(CSOUND*,PRINTK2 *p);
-int printk4(CSOUND*,PRINTK2 *p);
-int printk2set(CSOUND*,PRINTK2 *p);
-int printks(CSOUND*,PRINTKS *p);
-int printkset(CSOUND*,PRINTK *p);
-int printksset(CSOUND*,PRINTKS *p);
-int printksset_S(CSOUND*,PRINTKS *p);
-int printsset(CSOUND*,PRINTS *p);
-int printsset_S(CSOUND*,PRINTS *p);
-int printk3(CSOUND*,PRINTK3 *p);
-int printk3set(CSOUND*,PRINTK3 *p);
+int32_t peaka(CSOUND*,PEAK *p);
+int32_t peakk(CSOUND*,PEAK *p);
+int32_t printk(CSOUND*,PRINTK *p);
+int32_t printk2(CSOUND*,PRINTK2 *p);
+int32_t printk4(CSOUND*,PRINTK2 *p);
+int32_t printk2set(CSOUND*,PRINTK2 *p);
+int32_t printks(CSOUND*,PRINTKS *p);
+int32_t printkset(CSOUND*,PRINTK *p);
+int32_t printksset(CSOUND*,PRINTKS *p);
+int32_t printksset_S(CSOUND*,PRINTKS *p);
+int32_t printsset(CSOUND*,PRINTS *p);
+int32_t printsset_S(CSOUND*,PRINTS *p);
+int32_t printk3(CSOUND*,PRINTK3 *p);
+int32_t printk3set(CSOUND*,PRINTK3 *p);
 
 //int tablecopy(CSOUND*,TABLECOPY *p);
 //int tablecopyset(CSOUND*,TABLECOPY *p);
@@ -282,8 +282,8 @@ int printk3set(CSOUND*,PRINTK3 *p);
 //int tablewkt(CSOUND*,TABLEW *p);
 //int tblsetw(CSOUND*,TABLEW *p);
 //int tblsetwkt(CSOUND*,TABLEW *p);
-int timek(CSOUND*,RDTIME *p);
-int timesr(CSOUND*,RDTIME *p);
-int inz(CSOUND*,IOZ *p);
-int outz(CSOUND*,IOZ *p);
+int32_t timek(CSOUND*,RDTIME *p);
+int32_t timesr(CSOUND*,RDTIME *p);
+int32_t inz(CSOUND*,IOZ *p);
+int32_t outz(CSOUND*,IOZ *p);
 

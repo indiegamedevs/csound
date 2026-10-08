@@ -17,8 +17,7 @@
 
  You should have received a copy of the GNU Lesser General Public
  License along with Csound; if not, write to the Free Software
- Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- 02110-1301 USA
+ Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
  */
 
 #ifndef EXTRACT_H
@@ -28,10 +27,10 @@
 
 typedef struct extractStatics__ {
     char    inslst[INSMAX];         /*   values set by readxfil         */
-    int     sectno, a0done;
-    int     onsect, offsect;        /*      "       "       "           */
-    MYFLT   onbeat, offbeat;        /*      "       "       "           */
-    MYFLT   ontime, offtime;        /* set by readxfil, mod by w-stmnt  */
+    int32_t     sectno, a0done;
+    int32_t     onsect, offsect;        /*      "       "       "           */
+    cs_float   onbeat, offbeat;        /*      "       "       "           */
+    cs_float   ontime, offtime;        /* set by readxfil, mod by w-stmnt  */
     SRTBLK  *frstout, *prvout;      /* links for building new outlist   */
     SRTBLK  a0;
     SRTBLK  f0;

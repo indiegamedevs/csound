@@ -19,11 +19,26 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"
+
+#ifdef BARE_METAL
+#ifdef HAVE_STRTOD_L
+#undef HAVE_STRTOD_L
+#endif
+
+#ifdef HAVE_SPRINTF_L
+#undef HAVE_SPRINTF_L
+#endif
+
+#ifdef HAVE__SPRINT_L
+#undef HAVE__SPRINT_L
+#endif
+
+#endif
+
 #ifdef HAVE_STRTOD_L
 static locale_t csound_c_locale = NULL;
 #else
@@ -37,7 +52,7 @@ static char *csound_c_locale = NULL;
 typedef void* DIR;
 DIR opendir(const char *);
 struct dirent *readdir(DIR*);
-int closedir(DIR*);
+int32_t closedir(DIR*);
 #  endif
 #endif
 
@@ -63,12 +78,12 @@ void init_getstring(void *cs)
 #endif
 }
 
-PUBLIC char *csoundLocalizeString(const char *s)
+ char *csoundLocalizeString(const char *s)
 {
     return (char*)s;
 }
 /* This stub is needed for backwards compatibility */
-PUBLIC void csoundSetLanguage(cslanguage_t lang_code)
+ void csoundSetLanguage(cslanguage_t lang_code)
 {
   IGN(lang_code);
     return;
@@ -82,10 +97,10 @@ void init_getstring(void *cs)
 /*       setlocale (LC_MESSAGES, ""); */
 /*     else  */
 /*       setlocale (LC_MESSAGES, s);    /\* Set to particular value *\/ */
-/*    textdomain("csound6"); */  /* This is not needed when using dgettext */
-    /* bind_textdomain_codeset("csound6", "UTF-8"); */
+/*    textdomain("csound7"); */  /* This is not needed when using dgettext */
+    /* bind_textdomain_codeset("csound7", "UTF-8"); */
 #if defined(CSOUND_TEXTDOMAIN)
-    bindtextdomain("csound6", CSOUND_TEXTDOMAIN);
+    bindtextdomain("csound7", CSOUND_TEXTDOMAIN);
 #endif
 #ifndef HAVE_STRTOD_L
     setlocale(LC_NUMERIC, "C"); /* Ensure C syntax */
@@ -96,9 +111,9 @@ void init_getstring(void *cs)
 #endif
 }
 
-PUBLIC char *csoundLocalizeString(const char *s)
+ char *csoundLocalizeString(const char *s)
 {
-    return dgettext("csound6", s);
+    return dgettext("csound7", s);
 }
 
 static const char *language_names[] = {"", /* Default */
@@ -176,7 +191,7 @@ static const char *language_names[] = {"", /* Default */
                             "es_CO", /* COLUMBIAN */
   };
 
-PUBLIC void csoundSetLanguage(cslanguage_t lang_code)
+ void csoundSetLanguage(cslanguage_t lang_code)
 {
     const char *name;
     if (lang_code == CSLANGUAGE_DEFAULT)
@@ -184,7 +199,7 @@ PUBLIC void csoundSetLanguage(cslanguage_t lang_code)
                       "default language.\n");
     else {
       fprintf(stderr, "Setting language of messages to %s ...\n",
-                      name=language_names[(int) lang_code]);
+                      name=language_names[(int32_t) lang_code]);
       setlocale(LC_MESSAGES, name);
     }
     return;
@@ -192,7 +207,7 @@ PUBLIC void csoundSetLanguage(cslanguage_t lang_code)
 
 #endif
 
-PUBLIC char* cs_strtok_r(char* str, char* delim, char** nextp) {
+ char* cs_strtok_r(char* str, char* delim, char** nextp) {
 #ifdef HAVE_STRTOK_R
     return strtok_r(str, delim, nextp);
 #else
@@ -227,31 +242,31 @@ PUBLIC char* cs_strtok_r(char* str, char* delim, char** nextp) {
 #endif
 }
 
-PUBLIC double cs_strtod(char* nptr, char** endptr) {
-#ifdef HAVE_STRTOD_L
-    return strtod_l(nptr, endptr, csound_c_locale);
+cs_double csoundStrtod(char* nptr, char** endptr) {
+#if defined(HAVE_STRTOD_L) && !defined(__wasi__)
+  return strtod_l(nptr, endptr, csound_c_locale);
 #else
     return strtod(nptr, endptr);
 #endif
 }
 
 #if defined(HAVE_SPRINTF_L)
-PUBLIC int cs_sprintf(char *str, const char *format, ...)
+ int32_t csoundSprintf(char *str, const char *format, ...)
 {
     // This is not thread-safe but no idea how to fix
     va_list args;
-    int retVal;
+    int32_t retVal;
     va_start(args, format);
     retVal = vsprintf_l(str,csound_c_locale,format,args);
     va_end(args);
     return retVal;
 }
 
-PUBLIC int cs_sscanf(char *str, const char *format, ...)
+ int32_t csoundSscanf(char *str, const char *format, ...)
 {
     // This is not thread-safe but no idea how to fix
     va_list args;
-    int retVal;
+    int32_t retVal;
     va_start(args, format);
     retVal = vsscanf_l(str,csound_c_locale,format,args);
     va_end(args);
@@ -259,33 +274,33 @@ PUBLIC int cs_sscanf(char *str, const char *format, ...)
 }
 #else
 #if defined(HAVE__SPRINT_L)
-PUBLIC int cs_sprintf(char *str, const char *format, ...)
+ int32_t csoundSprintf(char *str, const char *format, ...)
 {
     // This is not thread-safe but no idea how to fix
     va_list args;
-    int retVal;
+    int32_t retVal;
     va_start(args, format);
     retVal = __vsprintf_l(str,csound_c_locale,format,args);
     va_end(args);
     return retVal;
 }
 
-PUBLIC int cs_sscanf(char *str, const char *format, ...)
+ int32_t csoundSscanf(char *str, const char *format, ...)
 {
     // This is not thread-safe but no idea how to fix
     va_list args;
-    int retVal;
+    int32_t retVal;
     va_start(args, format);
     retVal = __vsscanf_l(str,csound_c_locale,format,args);
     va_end(args);
     return retVal;
 }
 #else
-PUBLIC int cs_sprintf(char *str, const char *format, ...)
+ int32_t csoundSprintf(char *str, const char *format, ...)
 {
     // This is not thread-safe but no idea how to fix
     va_list args;
-    int retVal;
+    int32_t retVal;
     char *curlocale = setlocale(LC_NUMERIC, "C");
     va_start(args, format);
     retVal = vsprintf(str,format,args);
@@ -294,11 +309,11 @@ PUBLIC int cs_sprintf(char *str, const char *format, ...)
     return retVal;
 }
 
-PUBLIC int cs_sscanf(char *str, const char *format, ...)
+ int32_t csoundSscanf(char *str, const char *format, ...)
 {
     // This is not thread-safe but no idea how to fix
     va_list args;
-    int retVal;
+    int32_t retVal;
     char *curlocale = setlocale(LC_NUMERIC, "C");
     va_start(args, format);
     retVal = vsscanf(str,format,args);

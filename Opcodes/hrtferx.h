@@ -17,18 +17,19 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with Csound; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-  02110-1301 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /****************** hrtferxk.h *******************/
+
+#pragma once
 
 #include "3Dug.h"
 
 typedef struct {
   OPDS  h;
-  MYFLT         *aLeft, *aRight;             /* outputs  */
-  MYFLT         *aIn, *kAz, *kElev;          /* inputs   */
+  cs_float         *aLeft, *aRight;             /* outputs  */
+  cs_float         *aIn, *kAz, *kElev;          /* inputs   */
   STRINGDAT     *ifilno; /* and inputs */
   MEMFIL        *mfp;                        /* file pointer */
   int16         *fpbegin;
@@ -36,7 +37,8 @@ typedef struct {
   int32         incount, outfront, outend, outcount;
   AUXCH         auxch;      /* will point to allocated memory */
   HRTF_DATUM    hrtf_data, oldhrtf_data;  /* matrix to store HRTF data */
-  MYFLT         outl[BUF_LEN], outr[BUF_LEN];
-  MYFLT         x[BUF_LEN], yl[BUF_LEN], yr[BUF_LEN];
-  MYFLT         bl[FILT_LENm1], br[FILT_LENm1];
+  cs_float         outl[BUF_LEN], outr[BUF_LEN];
+  cs_float         x[BUF_LEN], yl[BUF_LEN], yr[BUF_LEN];
+  cs_float         bl[FILT_LENm1], br[FILT_LENm1];
+  void *setup, *isetup;
 } HRTFER;

@@ -17,10 +17,10 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 #ifndef CSOUND_CSGBLMTX_H
+#define CSOUND_CSGBLMTX_H
 
 
 #ifdef HAVE_PTHREAD
@@ -46,7 +46,9 @@ void csoundUnLock() {
 #endif
 
 #elif defined(_WIN32) || defined (__WIN32__)
+#ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
+#endif
 #include <windows.h>
 
 #ifdef __cplusplus
@@ -54,10 +56,11 @@ extern "C" {
   #endif
 
 static INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
-static CRITICAL_SECTION* csound_global_lock;
 
 static BOOL CALLBACK InitHandleFunction ( PINIT_ONCE InitOnce, PVOID Parameter,
     PVOID *lpContext) {
+    (void) InitOnce;
+    (void) Parameter;
 
     CRITICAL_SECTION* cs = (CRITICAL_SECTION*) malloc(sizeof(CRITICAL_SECTION));
     InitializeCriticalSection(cs);
@@ -69,22 +72,22 @@ static BOOL CALLBACK InitHandleFunction ( PINIT_ONCE InitOnce, PVOID Parameter,
 
 void csoundLock() {
     BOOL status;
-    CRITICAL_SECTION* cs;
+    PVOID context;
 
-    status = InitOnceExecuteOnce(&g_InitOnce, InitHandleFunction, NULL, &cs);
+    status = InitOnceExecuteOnce(&g_InitOnce, InitHandleFunction, NULL, &context);
     if (status) {
-      EnterCriticalSection(cs);
+      EnterCriticalSection((CRITICAL_SECTION *) context);
     }
 }
 
 void csoundUnLock() {
 
     BOOL status;
-    CRITICAL_SECTION* cs;
+    PVOID context;
 
-    status = InitOnceExecuteOnce(&g_InitOnce, InitHandleFunction, NULL, &cs);
+    status = InitOnceExecuteOnce(&g_InitOnce, InitHandleFunction, NULL, &context);
     if (status) {
-      LeaveCriticalSection(cs);
+      LeaveCriticalSection((CRITICAL_SECTION *) context);
     }
 }
 

@@ -19,23 +19,20 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"
 #include "csound_orc.h"
 #include "corfile.h"
 #include "score_param.h"
+#include "csound_orc_semantics.h"
+#include "new_orc_parser.h"
+#include "csmodule.h"
+void add_opcode_defs(CSOUND *csound);
 
 #if defined(HAVE_DIRENT_H)
 #  include <dirent.h>
-#  if 0 && defined(__MACH__)
-typedef void*   DIR;
-DIR             opendir(const char *);
-struct dirent   *readdir(DIR*);
-int             closedir(DIR*);
-#  endif
 #endif
 
 #if defined(WIN32) && !defined(__CYGWIN__)
@@ -43,47 +40,11 @@ int             closedir(DIR*);
 #  include <direct.h>
 #endif
 
-extern void csound_orcrestart(FILE*, void *);
-
-extern int csound_orcdebug;
-
-extern void print_csound_predata(void *);
-extern int csound_prelex_init(void *);
-extern void csound_preset_extra(void *, void *);
-
-extern int csound_prelex(CSOUND*, void*);
-extern int csound_prelex_destroy(void *);
-
-extern int csound_orc_scan_buffer (const char *, size_t, void*);
-extern int csound_orcparse(PARSE_PARM *, void *, CSOUND*, TREE**);
-extern int csound_orclex_init(void *);
-extern void csound_orcset_extra(void *, void *);
-extern void csound_orcset_lineno(int, void*);
-extern int csound_orclex_destroy(void *);
-extern void init_symbtab(CSOUND*);
-extern void print_tree(CSOUND *, char *, TREE *);
-extern TREE* verify_tree(CSOUND *, TREE *, TYPE_TABLE*);
-extern TREE *csound_orc_expand_expressions(CSOUND *, TREE *);
-extern TREE* csound_orc_optimize(CSOUND *, TREE *);
-//extern void csp_orc_analyze_tree(CSOUND* csound, TREE* root);
-extern void csp_orc_sa_print_list(CSOUND*);
-
-#if 0
-static void csound_print_preextra(CSOUND *csound, PRE_PARM  *x)
-{
-    csound->DebugMsg(csound,"********* Extra Pre Data %p *********\n", x);
-    csound->DebugMsg(csound,"macros = %p, macro_stack_ptr = %u, ifdefStack=%p,\n"
-           "isIfndef=%d\n, line=%d\n",
-           x->macros, x->macro_stack_ptr, x->ifdefStack, x->isIfndef, x->line);
-    csound->DebugMsg(csound,"******************\n");
-}
-#endif
-
 uint64_t make_location(PRE_PARM *qq)
 {
-    int d = qq->depth;
+    int32_t d = qq->depth;
     uint64_t loc = 0;
-    int n = (d>8?d-7:0);
+    int32_t n = (d>8?d-7:0);
     for (; n<=d; n++) {
       loc = (loc<<8)+(qq->lstack[n]);
     }
@@ -92,9 +53,9 @@ uint64_t make_location(PRE_PARM *qq)
 
 uint64_t make_slocation(PRS_PARM *qq)
 {
-    int d = qq->depth;
+    int32_t d = qq->depth;
     uint64_t loc = 0;
-    int n = (d>8?d-7:0);
+    int32_t n = (d>8?d-7:0);
     for (; n<=d; n++) {
       loc = (loc<<8)+(qq->lstack[n]);
     }
@@ -109,14 +70,14 @@ static void add_include_udo_dir(CSOUND *csound, CORFIL *xx)
     char buff[1024];
     if (dir) {
       DIR *udo = opendir(dir);
-      printf(Str("** found CS_UDO_DIR=%s\n"), dir);
+      //printf(Str("** found CS_UDO_DIR=%s\n"), dir);
       if (udo) {
         struct dirent *f;
         //printf("**and it opens\n");
         strcpy(buff, "#line 0\n");
         while ((f = readdir(udo)) != NULL) {
           char *fname = &(f->d_name[0]);
-          int n = (int)strlen(fname);
+          int32_t n = (int)strlen(fname);
           //printf("**  name=%s n=%d\n", fname, n);
           if (n>4 && (strcmp(&fname[n-4], ".udo")==0)) {
             strlcat(buff, "#include \"", 1024);
@@ -141,9 +102,10 @@ static void add_include_udo_dir(CSOUND *csound, CORFIL *xx)
 
 TREE *csoundParseOrc(CSOUND *csound, const char *str)
 {
-    int err;
-    OPARMS *O = csound->oparms;
-    csound->parserNamedInstrFlag = 2;
+    int32_t err;
+    if (UNLIKELY(csoundLoadRequestedPlugins(csound) != CSOUND_SUCCESS))
+      return NULL;
+    add_opcode_defs(csound);  // add global OpcodeDef variables
     {
       PRE_PARM    qq;
       /* Preprocess */
@@ -186,24 +148,21 @@ TREE *csoundParseOrc(CSOUND *csound, const char *str)
         corfile_putc(csound, '\0', csound->orchstr);
         corfile_putc(csound, '\0', csound->orchstr);
       }
-
-      csound->DebugMsg(csound, "Calling preprocess on >>%s<<\n",
+      if(csoundGetDebug(csound) & DEBUG_PARSER)
+	csoundMessage(csound, "Calling preprocess on:\n %s \n",
               corfile_body(csound->orchstr));
-      //csound->DebugMsg(csound,"FILE: %s\n", csound->orchstr->body);
-      //    csound_print_preextra(&qq);
       cs_init_math_constants_macros(csound);
       cs_init_omacros(csound, csound->omacros);
-      //    csound_print_preextra(&qq);
       csound_prelex(csound, qq.yyscanner);
       if (UNLIKELY(qq.ifdefStack != NULL)) {
         csound->Message(csound, Str("Unmatched #ifdef or #ifndef\n"));
         csound->LongJmp(csound, 1);
       }
       csound_prelex_destroy(qq.yyscanner);
-      csound->DebugMsg(csound, "yielding >>%s<<\n",
+      if(csoundGetDebug(csound) & DEBUG_PARSER)
+	csoundMessage(csound, "preprocessing result: \n %s\n",
                        corfile_body(csound->expanded_orc));
       corfile_rm(csound, &csound->orchstr);
-
     }
     {
       /* VL 15.3.2015 allocating memory here will cause
@@ -214,33 +173,25 @@ TREE *csoundParseOrc(CSOUND *csound, const char *str)
       TREE* newRoot;
       PARSE_PARM  pp;
       TYPE_TABLE* typeTable = NULL;
+      int32_t hadStatements = 0;
 
       /* Parse */
       memset(&pp, '\0', sizeof(PARSE_PARM));
-      init_symbtab(csound);
 
-      csound_orcdebug = O->odebug;
       csound_orclex_init(&pp.yyscanner);
-
 
       csound_orcset_extra(&pp, pp.yyscanner);
       csound_orc_scan_buffer(corfile_body(csound->expanded_orc),
                              corfile_tell(csound->expanded_orc), pp.yyscanner);
-
-      //csound_orcset_lineno(csound->orcLineOffset, pp.yyscanner);
-      //printf("%p\n", astTree);
       err = csound_orcparse(&pp, pp.yyscanner, csound, &astTree);
-      //printf("%p\n", astTree);
-      //print_tree(csound, "AST - AFTER csound_orcparse()\n", astTree);
-      //csp_orc_sa_cleanup(csound);
       corfile_rm(csound, &csound->expanded_orc);
 #ifdef PARCS
-      if (UNLIKELY(csound->oparms->odebug)) csp_orc_sa_print_list(csound);
+      if (UNLIKELY(csoundGetDebug(csound) > 99)) csp_orc_sa_print_list(csound);
 #endif
       if (UNLIKELY(csound->synterrcnt)) err = 3;
       if (LIKELY(err == 0)) {
-        if (csound->oparms->odebug) csound->Message(csound,
-                                                    Str("Parsing successful!\n"));
+        if (csoundGetDebug(csound) & DEBUG_PARSER)
+	  csound->Message(csound,Str("Parsing successful!\n"));
       }
       else {
         if (err == 1){
@@ -251,49 +202,145 @@ TREE *csoundParseOrc(CSOUND *csound, const char *str)
                           Str("Parsing failed due to memory exhaustion!\n"));
         }
         else if (err == 3){
-          csoundErrorMsg(csound, Str("Parsing failed due to %d syntax error%s!\n"),
-                          csound->synterrcnt, csound->synterrcnt==1?"":"s");
+          csoundErrorMsg(csound, Str("Parsing failed due to %d syntax error%s\n"),
+                         csound->synterrcnt, csound->synterrcnt==1?"":"s");
         }
         goto ending;
       }
-      if (UNLIKELY(PARSER_DEBUG)) {
+      if (UNLIKELY(csoundGetDebug(csound) & DEBUG_PARSER)) {
         print_tree(csound, "AST - INITIAL\n", astTree);
+      }
+
+      // EARLY two-phase struct processing: must happen before any variable declarations
+      // This ensures struct types are available when parsing variable declarations like john:Person
+      {
+        extern int32_t process_struct_definitions_two_phase(CSOUND* csound, TREE* structDefList);
+
+        // Create a separate list of wrapper nodes to avoid mutating the original AST
+        TREE* structList = NULL;
+        TREE* structTail = NULL;
+        TREE* scan = astTree;
+
+        while (scan != NULL) {
+          if (scan->type == STRUCT_TOKEN) {
+            // Create a wrapper node that references the struct node without modifying its next pointer
+            TREE* wrapper = (TREE*)csound->Malloc(csound, sizeof(TREE));
+            if (UNLIKELY(wrapper == NULL)) {
+              csound->ErrorMsg(csound, Str("Memory allocation failed for struct wrapper node\n"));
+              err = 3;
+
+              // Clean up any already allocated wrapper nodes before jumping to ending
+              TREE* current = structList;
+              while (current != NULL) {
+                TREE* next = current->next;
+                csound->Free(csound, current);
+                current = next;
+              }
+              structList = NULL;
+
+              goto ending;
+            }
+
+            // Initialize wrapper with minimal information needed for processing
+            wrapper->type = scan->type;
+            wrapper->value = scan->value;
+            wrapper->rate = scan->rate;
+            wrapper->len = scan->len;
+            wrapper->line = scan->line;
+            wrapper->locn = scan->locn;
+            wrapper->left = scan->left;
+            wrapper->right = scan->right;
+            wrapper->markup = scan->markup;
+            wrapper->next = NULL;  // Initialize next to NULL
+
+            // Add wrapper to struct list
+            if (structList == NULL) {
+              structList = wrapper;
+              structTail = wrapper;
+            } else {
+              structTail->next = wrapper;
+              structTail = wrapper;
+            }
+          }
+          scan = scan->next;
+        }
+
+        // Process all struct definitions in two phases
+        if (structList != NULL) {
+          if (!process_struct_definitions_two_phase(csound, structList)) {
+            csound->ErrorMsg(csound, Str("Error in early two-phase struct processing\n"));
+            err = 3;
+
+            // Clean up wrapper nodes before exiting
+            TREE* current = structList;
+            while (current != NULL) {
+              TREE* next = current->next;
+              csound->Free(csound, current);
+              current = next;
+            }
+            goto ending;
+          }
+
+          // Clean up wrapper nodes after successful processing
+          TREE* current = structList;
+          while (current != NULL) {
+            TREE* next = current->next;
+            csound->Free(csound, current);
+            current = next;
+          }
+        }
       }
 
       typeTable = csound->Malloc(csound, sizeof(TYPE_TABLE));
       typeTable->udos = NULL;
 
       typeTable->globalPool = csoundCreateVarPool(csound);
+      if (typeTable->globalPool == NULL) {
+        csound->ErrorMsg(csound, Str("Failed to create globalPool in parser\n"));
+        csound->Free(csound, typeTable);
+        err = 3;
+        goto ending;
+      }
+
+
       typeTable->instr0LocalPool = csoundCreateVarPool(csound);
+      if (typeTable->instr0LocalPool == NULL) {
+        csound->ErrorMsg(csound, Str("Failed to create instr0LocalPool in parser\n"));
+        csoundFreeVarPool(csound, typeTable->globalPool);
+        csound->Free(csound, typeTable);
+        err = 3;
+        goto ending;
+      }
 
       typeTable->localPool = typeTable->instr0LocalPool;
       typeTable->labelList = NULL;
 
+      /* Empty input parses to no statements, which is valid: the compiler is
+         then given just the sentinel root carrying the TYPE_TABLE and can
+         still create instr0 and initialise the system constants. Verification
+         returns NULL both for that case and for failure, so remember whether
+         there was anything to verify rather than inferring it from the result.
+         synterrcnt alone is not sufficient: some verify_tree failures, such
+         as a rejected struct definition, report through ErrorMsg only and
+         leave synterrcnt unchanged. */
+      hadStatements = (astTree != NULL);
       astTree = verify_tree(csound, astTree, typeTable);
-//      csound->Free(csound, typeTable->instr0LocalPool);
-//      csound->Free(csound, typeTable->globalPool);
-//      csound->Free(csound, typeTable);
-      //print_tree(csound, "AST - FOLDED\n", astTree);
 
-      if (UNLIKELY(astTree == NULL || csound->synterrcnt)) {
+      if (UNLIKELY(csound->synterrcnt || (hadStatements && astTree == NULL))) {
         err = 3;
         if (astTree)
           csound->Message(csound,
-                          Str("Parsing failed due to %d semantic error%s!\n"),
-                          csound->synterrcnt, csound->synterrcnt==1?"":"s");
+                          Str("Parsing failed due to %d semantic error%s!, line %d\n"),
+                          csound->synterrcnt, csound->synterrcnt==1?"":"s", astTree->line);
         else if (csound->synterrcnt)
           csoundErrorMsg(csound, Str("Parsing failed due to syntax errors\n"));
         else
-          csoundErrorMsg(csound, Str("Parsing failed due to no input!\n"));
+          csoundErrorMsg(csound, Str("Parsing failed due to semantic errors\n"));
         goto ending;
       }
       err = 0;
 
-      //csp_orc_analyze_tree(csound, astTree);
-
-//      astTree = csound_orc_expand_expressions(csound, astTree);
-//
-      if (UNLIKELY(PARSER_DEBUG)) {
+      if (UNLIKELY(csoundGetDebug(csound) & DEBUG_PARSER)) {
         print_tree(csound, "AST - AFTER VERIFICATION/EXPANSION\n", astTree);
       }
 
@@ -316,25 +363,15 @@ TREE *csoundParseOrc(CSOUND *csound, const char *str)
       }
 
       astTree = csound_orc_optimize(csound, astTree);
-      //print_tree(csound, "AST after optmize", astTree);
-      // small hack: use an extra node as head of tree list to hold the
-      // typeTable, to be used during compilation
+      /* Prepend a sentinel node to the statement list to carry the
+         TYPE_TABLE across to the compilation step, which receives only the
+         tree root and reads the table back from root->markup. The node is
+         type 0 with no value, which is how csound_compile_tree recognises and
+         skips it. For empty input astTree is NULL, so this node is the only
+         one in the list and carries the table by itself. */
       newRoot = make_leaf(csound, 0, 0, 0, NULL);
       newRoot->markup = typeTable;
       newRoot->next = astTree;
-
-      /* if (str!=NULL){ */
-      /*        if (typeTable != NULL) { */
-      /*     csoundFreeVarPool(csound, typeTable->globalPool); */
-      /*     if (typeTable->instr0LocalPool != NULL) { */
-      /*       csoundFreeVarPool(csound, typeTable->instr0LocalPool); */
-      /*     } */
-      /*     if (typeTable->localPool != typeTable->instr0LocalPool) { */
-      /*       csoundFreeVarPool(csound, typeTable->localPool); */
-      /*     } */
-      /*     csound->Free(csound, typeTable); */
-      /*   } */
-      /* } */
 
       return newRoot;
     }

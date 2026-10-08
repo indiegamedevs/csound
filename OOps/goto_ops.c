@@ -19,20 +19,22 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with Csound; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-  02110-1301 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
-#include "csoundCore.h" /*                            GOTO_OPS.C        */
-#include "insert.h"     /* for goto's */
-#include "aops.h"       /* for cond's */
-extern int32_t strarg2insno(CSOUND *, void *p, int32_t is_string);
+#include "csoundCore.h" 
+#include "udo.h"   
+#include "goto_ops.h" 
+#include "aops.h"      
+#include "csound_standard_types.h"
+extern int32_t csoundStringArg2Insno(CSOUND *, void *p, int32_t is_string);
 
 int32_t igoto(CSOUND *csound, GOTO *p)
 {
   csound->ids = p->lblblk->prvi;
   return OK;
 }
+
 
 int32_t kgoto(CSOUND *csound, GOTO *p)
 {
@@ -60,10 +62,10 @@ int32_t kcgoto(CSOUND *csound, CGOTO *p)
 /* an 'if-then' variant of 'if-goto' */
 int32_t ingoto(CSOUND *csound, CGOTO *p)
 {
-  /* Make sure we have an i-time conditional */
-  if (p->h.optext->t.intype == 'b' && !*p->cond)
-    csound->ids = p->lblblk->prvi;
-  return OK;
+    /* Make sure we have an i-time conditional */
+    if (csoundGetTypeForArg(p->cond) == &CS_VAR_TYPE_b && !*p->cond)
+      csound->ids = p->lblblk->prvi;
+    return OK;
 }
 
 int32_t kngoto(CSOUND *csound, CGOTO *p)
@@ -105,20 +107,43 @@ int32_t reinit(CSOUND *csound, GOTO *p)
   if (csound->oparms->realtime == 0) {
     csound->curip = p->h.insdshead;
     csound->ids = p->lblblk->prvi;        /* now, despite ANSI C warning:  */
+    p->h.insdshead->init_pass++;
     while ((csound->ids = csound->ids->nxti) != NULL &&
-           (csound->ids->iopadr != (SUBR) rireturn))
-      (*csound->ids->iopadr)(csound, csound->ids);
+           (csound->ids->init != (SUBR) rireturn))
+      (*csound->ids->init)(csound, csound->ids);
     csound->reinitflag = p->h.insdshead->reinitflag = 0;
   }
   else {
-    uint64_t wp = csound->alloc_queue_wp;
+    int32_t init_done = ATOMIC_GET(p->h.insdshead->init_done);
+    int32_t actflg = ATOMIC_GET8(p->h.insdshead->actflg);
+    ALLOC_DATA data = { 0 };
+
+    /* Publish the reinit lifecycle before the request enters the queue. A
+       concurrent turnoff is retained until the event thread finishes it. */
+    if (UNLIKELY(instance_init_begin(csound, p->h.insdshead) !=
+                 CSOUND_SUCCESS)) {
+      csound->reinitflag = p->h.insdshead->reinitflag = 0;
+      return csound->PerfError(csound, &p->h, "%s",
+                               Str("reinit: instance is being turned off"));
+    }
     ATOMIC_SET(p->h.insdshead->init_done, 0);
     ATOMIC_SET8(p->h.insdshead->actflg, 0);
-    csound->alloc_queue[wp].ip = p->h.insdshead;
-    csound->alloc_queue[wp].ids = p->lblblk->prvi;
-    csound->alloc_queue[wp].type = 3;
-    csound->alloc_queue_wp = wp + 1 < MAX_ALLOC_QUEUE ? wp + 1 : 0;
-    ATOMIC_INCR(csound->alloc_queue_items);
+    data.ip = p->h.insdshead;
+    data.ids = p->lblblk->prvi;
+    data.type = ALLOC_DATA_REINIT_PASS;
+
+    if (UNLIKELY(alloc_queue_enqueue(csound, &data) != CSOUND_SUCCESS)) {
+      INSTANCE_INIT_RESULT initResult;
+
+      initResult = instance_init_finish(csound, p->h.insdshead);
+      csound->reinitflag = p->h.insdshead->reinitflag = 0;
+      if (initResult != INSTANCE_INIT_TURNOFF) {
+        ATOMIC_SET(p->h.insdshead->init_done, init_done);
+        ATOMIC_SET8(p->h.insdshead->actflg, actflg);
+      }
+      return csound->PerfError(csound, &p->h, "%s",
+                               Str("reinit: realtime allocation queue is full"));
+    }
     return NOTOK;
   }
   return OK;
@@ -178,18 +203,24 @@ int32_t turnoff(CSOUND *csound, LINK *p)/* terminate the current instrument  */
   return OK;
 }
 
+
+int32_t instr_num(CSOUND *csound, INSTRTXT *instr);
 /* turnoff2 opcode */
 int32_t turnoff2(CSOUND *csound, TURNOFF2 *p, int32_t isStringArg)
 {
-  MYFLT p1;                     /* Shoud e a float */
+  cs_float p1;                     /* Shoud e a float */
   INSDS *ip, *ip2, *nip;
   int32_t   mode, insno, allow_release;
 
-  if (isStringArg) {
-    p1 = (MYFLT) strarg2insno(csound, ((STRINGDAT *)p->kInsNo)->data, 1);
+  if (isStringArg == 1) {
+    p1 = (cs_float) csoundStringArg2Insno(csound, ((STRINGDAT *)p->kInsNo)->data, 1);
   }
-  else if (csound->ISSTRCOD(*p->kInsNo)) {
-    p1 = (MYFLT) strarg2insno(csound, get_arg_string(csound, *p->kInsNo), 1);
+  else if (isStringArg == 2) {
+    INSTREF *ref = (INSTREF *) p->kInsNo;
+    p1 = (cs_float) instr_num(csound, ref->instr);
+  }
+  else if (IsStringCode(*p->kInsNo)) {
+    p1 = (cs_float) csoundStringArg2Insno(csound, csoundGetArgString(csound, *p->kInsNo), 1);
   }
   else p1 = *(p->kInsNo);
 
@@ -199,7 +230,7 @@ int32_t turnoff2(CSOUND *csound, TURNOFF2 *p, int32_t isStringArg)
   insno = (int32_t) p1;
   if (UNLIKELY(insno < 1 || insno > (int32_t) csound->engineState.maxinsno ||
                csound->engineState.instrtxtp[insno] == NULL)) {
-    if(p->h.iopadr == NULL)
+    if(p->h.init == NULL)
       return csoundPerfError(csound, &(p->h),
                              Str("turnoff2: invalid instrument number"));
     else return csoundInitError(csound,
@@ -209,7 +240,7 @@ int32_t turnoff2(CSOUND *csound, TURNOFF2 *p, int32_t isStringArg)
   mode = (int32_t) (*(p->kFlags) + FL(0.5));
   allow_release = (*(p->kRelease) == FL(0.0) ? 0 : 1);
   if (UNLIKELY(mode < 0 || mode > 15 || (mode & 3) == 3)) {
-    if(p->h.iopadr == NULL)
+    if(p->h.init == NULL)
       return csoundPerfError(csound, &(p->h),
                              Str("turnoff2: invalid mode parameter"));
     else csoundInitError(csound,
@@ -270,21 +301,29 @@ int32_t turnoff2S(CSOUND *csound, TURNOFF2 *p){
   return turnoff2(csound, p, 1);
 }
 
+int32_t turnoff2Instr(CSOUND *csound, TURNOFF2 *p){
+  return turnoff2(csound, p, 2);
+}
+
 int32_t turnoff2k(CSOUND *csound, TURNOFF2 *p){
   return turnoff2(csound, p, 0);
 }
 
-extern void delete_selected_rt_events(CSOUND*, MYFLT);
+extern void delete_selected_rt_events(CSOUND*, cs_float);
 int32_t turnoff3(CSOUND *csound, TURNOFF2 *p, int32_t isStringArg)
 {
-  MYFLT p1;
+  cs_float p1;
   int32_t   insno;
 
   if (isStringArg) {
-    p1 = (MYFLT) strarg2insno(csound, ((STRINGDAT *)p->kInsNo)->data, 1);
+    p1 = (cs_float) csoundStringArg2Insno(csound, ((STRINGDAT *)p->kInsNo)->data, 1);
   }
-  else if (csound->ISSTRCOD(*p->kInsNo)) {
-    p1 = (MYFLT) strarg2insno(csound, get_arg_string(csound, *p->kInsNo), 1);
+  else if (isStringArg == 2) {
+    INSTREF *ref = (INSTREF *) p->kInsNo;
+    p1 = (cs_float) instr_num(csound, ref->instr);
+  }
+  else if (IsStringCode(*p->kInsNo)) {
+    p1 = (cs_float) csoundStringArg2Insno(csound, csoundGetArgString(csound, *p->kInsNo), 1);
   }
   else p1 = *(p->kInsNo);
 
@@ -304,6 +343,10 @@ int32_t turnoff3(CSOUND *csound, TURNOFF2 *p, int32_t isStringArg)
 
 int32_t turnoff3S(CSOUND *csound, TURNOFF2 *p){
   return turnoff3(csound, p, 1);
+}
+
+int32_t turnoff3Instr(CSOUND *csound, TURNOFF2 *p){
+  return turnoff3(csound, p, 2);
 }
 
 int32_t turnoff3k(CSOUND *csound, TURNOFF2 *p){

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import os
 import re
@@ -179,7 +179,7 @@ makeFrontEnd('CsoundVST', 1)
 installXFile('', 'brkpt', binDir)
 installXFile('', 'linseg', binDir)
 installXFile('', 'tabdes', binDir)
-installFile('nsliders.tk', tclDir)
+installFile('Frontends/tcltk/nsliders.tk', tclDir)
 installXFile('', 'matrix.tk', binDir)
 
 # copy STK raw wave files

@@ -17,13 +17,15 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*                                                      SCOT.H       */
 /* aldel Jul 91 */
 
+#pragma once
+
+#include "csound_types.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -51,7 +53,7 @@ typedef struct strlist          /* used for p-fields */
 typedef struct note
 {
   struct note *next;
-  double instrum;
+  cs_double instrum;
   Rat start,                    /* when note starts */
       dur,                      /* length of note (mul by grpmul) */
       lastdur;                  /* duration to carry to next note */
@@ -117,13 +119,13 @@ static int findonoff(int *);
 static int findword(char *);
 static void efindword(char *);
 static int letterval(int);
-static double pitchval(int,int,int,int);
+static cs_double pitchval(int,int,int,int);
 static void writenote(Note *);
 static void freenote(Note *);
 static void freeps(Strlist *);
 static void strlistcopy(Strlist **,Strlist **);
 static int getccom(void);
-static double ratval(Rat *);
+static cs_double ratval(Rat *);
 static void ratreduce(Rat *);
 static void ratadd(Rat *,Rat *,Rat *);
 static void ratmul(Rat *,Rat *,Rat *);

@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /* pluck.h -- plucked string class declarations */
@@ -39,8 +38,8 @@
 /* pluck -- derived class to implement simple plucked string algorithm */
 typedef struct {
   OPDS h;
-  MYFLT *out;                   /* plucked string output */
-  MYFLT *freq,*amp,*pickupPos,*pickPos,*Aw0,*AwPI,*afdbk; /* inputs */
+  cs_float *out;                   /* plucked string output */
+  cs_float *freq,*amp,*pickupPos,*pickPos,*Aw0,*AwPI,*afdbk; /* inputs */
 
   waveguide wg;                 /* general waveguide model structure   */
   filter3 bridge;               /* lowpass bridge filter               */

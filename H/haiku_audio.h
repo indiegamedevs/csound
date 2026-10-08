@@ -20,8 +20,7 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with Csound; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-  02111-1307 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 
 */
 
@@ -32,16 +31,16 @@
 
 class Generator {
  public:
-        Generator(float sampleRate, int nchans, size_t bufferSize,
+        Generator(float sampleRate, int32_t nchans, size_t bufferSize,
                   int32 sampleSize);
 ;       ~Generator();
-        int RunAudio();
+        int32_t RunAudio();
 
         size_t mBufSize;      // in bytes (= samples * chans * floatsize)
         float mFrameRate;
-        int mChans;
+        int32_t mChans;
         int32 mSampleSize;
-        double *mDataBuf;     // filled by rtplay_, cleared afer copy
+        cs_double *mDataBuf;     // filled by rtplay_, cleared afer copy
         size_t mXferSize;     // actual source size in bytes (may be less than full)
         sem_id cs_sem;        // to be waited on by Csound
 

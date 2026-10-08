@@ -17,15 +17,14 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"         /*                  RDSCORSTR.C */
 #include "corfile.h"
-#include "insert.h"
+#include "udo.h"
 
-char* get_arg_string(CSOUND *csound, MYFLT p)
+char* csoundGetArgString(CSOUND *csound, cs_float p)
 {
     int32 n;
     char *ss;
@@ -35,31 +34,122 @@ char* get_arg_string(CSOUND *csound, MYFLT p)
     }
     ss = ip->strarg;  /* look at this instr's strarg */
 
+#ifdef USE_DOUBLE
     {
       union {
-        MYFLT d;
-        int32 i;
+        cs_float d;
+        int32 i[2];
       } ch;
-      ch.d = p; n = ch.i&0xffff;
-      while (n-- > 0) {
-        ss += strlen(ss)+1;
-      }
+      ch.d = p;
+      if (byte_order()==0)
+        n = ch.i[1]&0xffff;
+      else
+        n = ch.i[0]&0xffff;
+      //printf("UNION %.8x %.8x\n", ch.i[0], ch.i[1]);
     }
+#else
+    {
+      union {
+        cs_float d;
+        int32 j;
+      } ch;
+      ch.d = p; n = ch.j&0xffff;
+      //printf("SUNION %.8x \n", ch.j);
+    }
+#endif
+    while (n-- > 0) {
+      ss += strlen(ss)+1;
+    }
+    //printf(" *** -> %s\n", ss);
     return ss;
 }
+
+char* get_string_arg_from_evt(CSOUND *csound, cs_float p, EVTBLK *evt)
+{
+    int32 n;
+    char *ss = evt->strarg;
+#ifdef USE_DOUBLE
+    {
+      union {
+        cs_float d;
+        int32 i[2];
+      } ch;
+      ch.d = p;
+      if (byte_order()==0)
+        n = ch.i[1]&0xffff;
+      else
+        n = ch.i[0]&0xffff;
+      //printf("UNION %.8x %.8x\n", ch.i[0], ch.i[1]);
+    }
+#else
+    {
+      union {
+        cs_float d;
+        int32 j;
+      } ch;
+      ch.d = p; n = ch.j&0xffff;
+      //printf("SUNION %.8x \n", ch.j);
+    }
+#endif
+    while (n-- > 0) {
+      ss += strlen(ss)+1;
+    }
+    //printf(" *** -> %s\n", ss);
+    return ss;
+}
+
+
+void set_evt_strarg(CSOUND *csound, EVTBLK *e, int32_t pcnt, const
+                    char *str) {
+  int32_t scnt = e->scnt;
+  size_t strsiz = strlen(str) + 1;
+  if (e->strarg == NULL) {
+    e->strarg = csound->Malloc(csound, strsiz);
+    memcpy(e->strarg, str, strsiz);
+  }
+  else {
+    size_t offset = 0;
+    int32_t i;
+    /* String codes index a list of NUL-terminated strings. */
+    for (i = 0; i < scnt; ++i)
+      offset += strlen(e->strarg + offset) + 1;
+    e->strarg = csound->ReAlloc(csound, e->strarg, offset + strsiz);
+    memcpy(e->strarg + offset, str, strsiz);
+  }
+
+#ifdef USE_DOUBLE              
+  int32_t sel = (byte_order()+1)&1;
+  union {
+    cs_float d;
+    int32 i[2];
+  } ch;
+  ch.d = SSTRCOD; ch.i[sel] += scnt++;
+  e->p[pcnt] = ch.d;           /* set as string with count */
+#else
+  union {
+    cs_float d;
+    int32 i;
+  } ch;
+  ch.d = SSTRCOD; ch.i += scnt++;
+  e->p[pcnt] = ch.d;           /* set as string with count */
+#endif
+ e->scnt = scnt;
+}
+
+
 
 static void dumpline(CSOUND *);
 
 static void flushline(CSOUND *csound)   /* flush scorefile to next newline */
 {
-    int     c;
+    int32_t     c;
     while ((c = corfile_getc(csound->scstr)) != '\0' && c != '\n')
         ;
 }
 
-static int scanflt(CSOUND *csound, MYFLT *pfld)
-{   /* read a MYFLT from scorefile; return 1 if OK, else 0 */
-    int     c;
+static int32_t scanflt(CSOUND *csound, cs_float *pfld)
+{   /* read a cs_float from scorefile; return 1 if OK, else 0 */
+    int32_t     c;
 
     while ((c = corfile_getc(csound->scstr)) == ' ' ||
            c == '\t')  /* skip leading white space */
@@ -70,11 +160,11 @@ static int scanflt(CSOUND *csound, MYFLT *pfld)
     }
     if (c == '"') {                             /* if find a quoted string  */
       char *sstrp;
-      int n = csound->scnt;
+      int32_t n = csound->scnt;
       if ((sstrp = csound->sstrbuf) == NULL)
         sstrp = csound->sstrbuf = csound->Malloc(csound, csound->strsiz=SSTRSIZ);
       while (n--!=0) sstrp += strlen(sstrp)+1;
-      n = sstrp-csound->sstrbuf;
+      n = (int32_t) (sstrp-csound->sstrbuf);
       while ((c = corfile_getc(csound->scstr)) != '"') {
         if (c=='\\') { c = corfile_getc(csound->scstr);
           switch (c) {
@@ -94,20 +184,37 @@ static int scanflt(CSOUND *csound, MYFLT *pfld)
         n++;
         if (n > csound->strsiz-10) {
           csound->sstrbuf = csound->ReAlloc(csound, csound->sstrbuf,
-                                     csound->strsiz+=SSTRSIZ);
+                                            csound->strsiz+=SSTRSIZ);
           sstrp = csound->sstrbuf+n;
         }
       }
       *sstrp++ = '\0';
+#ifdef USE_DOUBLE
+      {
+        int32_t sel = (byte_order()+1)&1;
+        union {
+          cs_float d;
+          int32 i[2];
+        } ch;
+        ch.d = SSTRCOD;
+        //printf("**** %.8x %.8x\n", ch.i[0], ch.i[1]);
+        ch.i[sel] += csound->scnt++;
+        *pfld = ch.d;           /* set as string with count */
+        //printf("***  %.8x %.8x\n", ch.i[0], ch.i[1]);
+      }
+#else
       {
         union {
-          MYFLT d;
-          int32 i;
+          cs_float d;
+          int32 j;
         } ch;
-        ch.d = SSTRCOD; ch.i += csound->scnt++;
+        ch.d = SSTRCOD;
+        //printf("****** %.8x\n", ch.j);
+        ch.j += csound->scnt++;
         *pfld = ch.d;           /* set as string with count */
       }
-      csound->sstrlen = sstrp - csound->sstrbuf;  /*    & overall length  */
+#endif
+      csound->sstrlen = (int32_t) (sstrp - csound->sstrbuf);  /*    & overall length  */
       //printf("csound->sstrlen = %d\n", csound->sstrlen);
       return(1);
     }
@@ -121,7 +228,7 @@ static int scanflt(CSOUND *csound, MYFLT *pfld)
     }
     corfile_ungetc(csound->scstr);
     {
-      MYFLT ans = corfile_get_flt(csound->scstr);
+      cs_float ans = corfile_get_flt(csound->scstr);
       *pfld = ans;
       //printf("%s(%d):%lf %lf\n", __FILE__, __LINE__, ans, *pfld);
     }
@@ -130,159 +237,134 @@ static int scanflt(CSOUND *csound, MYFLT *pfld)
 
 static void dumpline(CSOUND *csound)    /* print the line while flushing it */
 {
-    int     c;
+    int32_t     c;
     while ((c = corfile_getc(csound->scstr)) != '\0' && c != '\n') {
       csound->Message(csound, "%c", c);
     }
     csound->Message(csound, Str("\n\tremainder of line flushed\n"));
 }
 
-int rdscor(CSOUND *csound, EVTBLK *e) /* read next score-line from scorefile */
-                                      /*  & maintain section warped status   */
+
+int32_t rdscor(CSOUND *csound, EVTBLK *e) /* read next score-line from scorefile */
+/*  & maintain section warped status   */
 {                                     /*      presumes good format if warped */
-    MYFLT   *pp, *plim;
-    int     c;
+  cs_float   *pp, *plim;
+  int32_t c;
+  int msize = PMAX;
+  e->pinstance = NULL;
+  if (csound->scstr == NULL ||
+      csound->scstr->body[0] == '\0') {   /* if no concurrent scorefile  */
+    e->opcod = 'f';             /*     return an 'f 0 3600'    */
+    e->p = csound->Calloc(csound, sizeof(cs_float)*3);
+    e->p[1] = FL(0.0);
+    e->p[2] = FL(INF);
+    e->p2orig = FL(INF);
+    e->pcnt = 2;
 
-    e->pinstance = NULL;
-    if (csound->scstr == NULL ||
-        csound->scstr->body[0] == '\0') {   /* if no concurrent scorefile  */
-      e->opcod = 'f';             /*     return an 'f 0 3600'    */
-      e->p[1] = FL(0.0);
-      e->p[2] = FL(INF);
-      e->p2orig = FL(INF);
-      e->pcnt = 2;
-
-      return(1);
-    }
-
+    return(1);
+  }
+    
+  e->p = csound->Calloc(csound, sizeof(cs_float)*(msize+1));
   /* else read the real score */
-    while ((c = corfile_getc(csound->scstr)) != '\0') {
-      csound->scnt = 0;
-      switch (c) {
-      case ' ':
-      case '\t':
-      case '\n':
-        continue;               /* skip leading white space */
-      case ';':
-        flushline(csound);
-        continue;
-      case 's':
-      case 't':
-      case 'y':
-        csound->warped = 0;
-        goto unwarped;
-      case 'w':
-        csound->warped = 1;     /* w statement is itself unwarped */
-      unwarped:   e->opcod = c;         /*  UNWARPED scorefile:         */
-        pp = &e->p[0];
-        plim = &e->p[PMAX];             /*    caution, irregular format */
-        while (1) {
-           while ((c = corfile_getc(csound->scstr))==' ' ||
-                 c=='\t'); /* eat whitespace */
-          if (c == ';') { flushline(csound); break; } /* comments? skip */
-          if (c == '\n' || c == '\0')   break;    /* newline? done  */
-          corfile_ungetc(csound->scstr);          /* pfld:  back up */
-          if (!scanflt(csound, ++pp))  break;     /*   & read value */
-            if (UNLIKELY(pp >= plim)) {
-            csound->Message(csound, Str("ERROR: too many pfields: "));
-            dumpline(csound);
-            break;
+  while ((c = corfile_getc(csound->scstr)) != '\0') {
+    csound->scnt = 0;
+    switch (c) {
+    case ' ':
+    case '\t':
+    case '\n':
+      continue;               /* skip leading white space */
+    case ';':
+      flushline(csound);
+      continue;
+    case 's':
+    case 't':
+    case 'y':
+      csound->warped = 0;
+      goto unwarped;
+    case 'w':
+      csound->warped = 1;     /* w statement is itself unwarped */
+    unwarped:
+      e->opcod = c;         /*  UNWARPED scorefile:         */
+      pp = &e->p[0];
+      plim = &e->p[PMAX];             /*    caution, irregular format */  
+      while (1) {
+        while ((c = corfile_getc(csound->scstr))==' ' ||
+               c=='\t'); /* eat whitespace */
+        if (c == ';') { flushline(csound); break; } /* comments? skip */
+        if (c == '\n' || c == '\0')   break;    /* newline? done  */
+        corfile_ungetc(csound->scstr);          /* pfld:  back up */
+        if (!scanflt(csound, ++pp))  break;     /*   & read value */
+        if (UNLIKELY(pp >= plim)) {
+          size_t ofs;
+          ofs = pp - e->p;
+          msize += PMAX;
+          e->p =  (cs_float*) csound->ReAlloc(csound, e->p,
+                                           sizeof(cs_float)*(msize+1));
+          if (UNLIKELY(e->p==NULL)) {
+            fprintf(stderr, Str("Out of Memory\n"));
+            exit(7);
           }
+          pp = e->p + ofs;
+          plim = e->p + msize;
         }
-        e->p2orig = e->p[2];                 /* now go count the pfields */
-        e->p3orig = e->p[3];
-        e->c.extra = NULL;
-        goto setp;
-      case 'e':
-        e->opcod = c;
-        e->pcnt = 0;
-        return(1);
-      case EOF:                          /* necessary for cscoreGetEvent */
-        return(0);
-      default:                                /* WARPED scorefile:       */
-        if (!csound->warped) goto unwarped;
-        e->opcod = c;                                       /* opcod */
-        csound->Free(csound, e->c.extra);
-        e->c.extra = NULL;
-        pp = &e->p[0];
-        plim = &e->p[PMAX];
+      }
+      e->p2orig = e->p[2];                 /* now go count the pfields */
+      e->p3orig = e->p[3];
+      goto setp;
+    case 'e':
+      e->opcod = c;
+      e->pcnt = 0;
+      return(1);
+    case EOF:                          /* necessary for cscoreGetEvent */
+      return(0);
+    default:                                /* WARPED scorefile:       */
+      if (!csound->warped) goto unwarped;
+      e->opcod = c;                                       /* opcod */
+      pp = &e->p[0];
+      plim = &e->p[PMAX];
+      if (corfile_getc(csound->scstr) != '\n' &&
+          scanflt(csound, ++pp))         /* p1      */
         if (corfile_getc(csound->scstr) != '\n' &&
-            scanflt(csound, ++pp))         /* p1      */
+            scanflt(csound, &e->p2orig)) /* p2 orig */
           if (corfile_getc(csound->scstr) != '\n' &&
-              scanflt(csound, &e->p2orig)) /* p2 orig */
+              scanflt(csound, ++pp))     /* p2 warp */
             if (corfile_getc(csound->scstr) != '\n' &&
-                scanflt(csound, ++pp))     /* p2 warp */
+                scanflt(csound, &e->p3orig)) /* p3  */
               if (corfile_getc(csound->scstr) != '\n' &&
-                  scanflt(csound, &e->p3orig)) /* p3  */
-                if (corfile_getc(csound->scstr) != '\n' &&
-                    scanflt(csound, ++pp)) /* p3 warp */
-                  while (corfile_getc(csound->scstr) != '\n' &&
-                         scanflt(csound, ++pp))
-                    /* p4....  */
-                    if (pp >= plim) {
-                      MYFLT *new;
-                      MYFLT *q;
-                      int c=1;
-                      csound->DebugMsg(csound, "Extra p-fields (%d %d %d %d)\n",
-                                       (int)e->p[1],(int)e->p[2],
-                                       (int)e->p[3],(int)e->p[4]);
-                      new = (MYFLT*) csound->Malloc(csound, sizeof(MYFLT)*PMAX);
-                      if (UNLIKELY(new==NULL)) {
-                        fprintf(stderr, Str("Out of Memory\n"));
-                        exit(7);
-                      }
-                      e->c.extra = new;
-                      e->c.extra[0] = PMAX-2;
-                      e->c.extra[1] = *pp;
-                      q = &e->c.extra[1];
-                      while ((corfile_getc(csound->scstr) != '\n') &&
-                             (scanflt(csound, &q[c++]))) {
-                        if (c+1 >= (int) e->c.extra[0]) {
-                          int size = (int)e->c.extra[0]+PMAX;
-                          /* printf("last values(%p): %f %f %f\n", */
-                          /*        q, q[c-3], q[c-2], q[c-1]); */
-                          csound->DebugMsg(csound,
-                                           "and more extra p-fields [%d](%d)%d\n",
-                                           c, (int) e->c.extra[0],
-                                           (int)sizeof(MYFLT)*
-                                                   ((int)e->c.extra[0]+PMAX));
-                          new =
-                            (MYFLT *) csound->ReAlloc(csound,
-                                                      e->c.extra,
-                                                      sizeof(MYFLT)*size);
-                          if (new==NULL) {
-                            fprintf(stderr, "Out of Memory\n");
-                            exit(7);
-                          }
-                          new[0] = size;
-                          e->c.extra = new; q = &new[1];
-                          /* printf("%p(%d) values: %f %f %f\n", (int)new[0], */
-                          /*        q, q[c-3], q[c-2], q[c-1]); */
-                        }
-                      }
-                      e->c.extra[0] = c;
-                      /* flushline(csound); */
-                      goto setp;
+                  scanflt(csound, ++pp)) /* p3 warp */
+                while (corfile_getc(csound->scstr) != '\n' &&
+                       scanflt(csound, ++pp)) { /* p4....  */
+                  if(pp >= plim) {
+                    size_t ofs;
+                    ofs = pp - e->p;
+                    msize += PMAX;
+                    e->p = (cs_float*) csound->ReAlloc(csound, e->p,
+                                                     sizeof(cs_float)*(msize+1));
+                    if (UNLIKELY(e->p==NULL)) {
+                      fprintf(stderr, Str("Out of Memory\n"));
+                      exit(7);
                     }
-      setp:
-        if (!csound->csoundIsScorePending_ && e->opcod == 'i') {
-          /* FIXME: should pause and not mute */
-          csound->sstrlen = 0;
-          e->opcod = 'f'; e->p[1] = FL(0.0); e->pcnt = 2; e->scnt = 0;
-          return 1;
-        }
-        e->pcnt = pp - &e->p[0];                   /* count the pfields */
-        if (UNLIKELY(e->pcnt>=PMAX))
-          e->pcnt += e->c.extra[0];                /* and overflow fields */
-        if (csound->sstrlen) {        /* if string arg present, save it */
-          e->strarg = csound->sstrbuf; csound->sstrbuf = NULL;
-          e->scnt = csound->scnt;
-          csound->sstrlen = 0;
-        }
-        else { e->strarg = NULL; e->scnt = 0; } /* is this necessary?? */
+                    pp = e->p + ofs;
+                    plim = e->p + msize;
+                  }
+                }
+    setp:
+      if (!csound->csoundIsScorePending_ && e->opcod == 'i') {
+        /* FIXME: should pause and not mute */
+        csound->sstrlen = 0;
+        e->opcod = 'f'; e->p[1] = FL(0.0); e->pcnt = 2; e->scnt = 0;
         return 1;
       }
+      e->pcnt = (int32_t) (pp - e->p);                   /* count the pfields */
+      if (csound->sstrlen) {        /* if string arg present, save it */
+        e->strarg = csound->sstrbuf; csound->sstrbuf = NULL;
+        e->scnt = csound->scnt;
+        csound->sstrlen = 0;
+      }
+      else { e->strarg = NULL; e->scnt = 0; } /* is this necessary?? */
+      return 1;
     }
-    corfile_rm(csound, &(csound->scstr));
-    return 0;
+  }
+  corfile_rm(csound, &(csound->scstr));
+  return 0;
 }

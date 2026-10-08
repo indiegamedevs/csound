@@ -1,9 +1,10 @@
 /*
   insert.c:
 
-  Copyright (C) 1991, 1997, 1999, 2002, 2005
+  Copyright (C) 1991, 1997, 1999, 2002, 2005, 2013, 2024
   Barry Vercoe, Istvan Varga, John ffitch,
-  Gabriel Maldonado, matt ingalls
+  Gabriel Maldonado, matt ingalls,
+  Victor Lazzarini, Steven Yi
 
   This file is part of Csound.
 
@@ -19,81 +20,647 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with Csound; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-  02110-1301 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h" /*  INSERT.C */
 #include "oload.h"
-#include "insert.h"     /* for goto's */
+#include "udo.h"
 #include "aops.h"       /* for cond's */
 #include "midiops.h"
-#include "namedins.h"   /* IV - Oct 31 2002 */
+#include "namedins.h"
 #include "pstream.h"
 #include "interlocks.h"
 #include "csound_type_system.h"
 #include "csound_standard_types.h"
+#include "csound_orc_semantics.h"
+#include "csound_orc_compile.h"
 #include <inttypes.h>
 
-static  void    showallocs(CSOUND *);
-static  void    deact(CSOUND *, INSDS *);
-static  void    schedofftim(CSOUND *, INSDS *);
-void    beatexpire(CSOUND *, double);
-void    timexpire(CSOUND *, double);
-static  void    instance(CSOUND *, int);
-extern int argsRequired(char* argString);
-static int insert_midi(CSOUND *csound, int insno, MCHNBLK *chn,
-                       MEVENT *mep);
-static int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp);
+static void show_allocs(CSOUND *);
+static void deact(CSOUND *, INSDS *);
+static void xturnoff_now_internal(CSOUND *, INSDS *, int32_t);
+static void free_unlinked_instance(CSOUND *, INSDS *);
+static void sched_off_time(CSOUND *, INSDS *);
+static int32_t insert_midi(CSOUND *csound, int32_t insno, MCHNBLK *chn,
+                           MEVENT *mep);
+static int32_t insert(CSOUND *csound, int32_t insno, EVTBLK *newevtp);
+static void maxalloc_turnoff(CSOUND *csound, int32_t insno);
+static INSDS *instantiate(CSOUND *csound, int32_t insno, int32_t link);
 
-static void print_messages(CSOUND *csound, int attr, const char *str){
-#if defined(WIN32)
-    switch (attr & CSOUNDMSG_TYPE_MASK) {
-    case CSOUNDMSG_ERROR:
-    case CSOUNDMSG_WARNING:
-    case CSOUNDMSG_REALTIME:
-      fprintf(stderr, str);
-      break;
-    default:
-      fprintf(stdout, str);
+/* An instrument normally needs only a few entries, one per opcode family.
+   Keep this list private so its representation can change without another
+   INSDS layout change. Payloads have the same alignment as csound->Calloc. */
+typedef struct instance_variable {
+    struct instance_variable *next;
+    void *data;
+    size_t capacity;
+    int32_t active;
+    char name[];
+} INSTANCE_VARIABLE;
+
+/**
+ * Create zero-filled storage local to owner, normally h.insdshead at init.
+ * Names are copied and must be nonempty. Use a fixed, family-specific name.
+ * Returns CSOUND_SUCCESS, CSOUND_ERROR for an invalid owner/name/size or an
+ * existing name, or CSOUND_MEMORY if allocation fails. The owner must belong
+ * to this CSOUND. Size limits match CreateGlobalVariable.
+ *
+ * Entries survive ties and reinit and remain available through opcode deinit.
+ * The engine discards them after deactivation, before reusing the instance.
+ * It retains their allocations for reuse until it frees the INSDS. Nested
+ * UDOs and subinstruments have separate storage, with no parent lookup.
+ *
+ * Create may allocate. Query searches only this instance. Cache the result
+ * for performance. Neither call locks. Callers must serialize access to the
+ * same owner, including any access through cached pointers during reinit.
+ * Opcodes must release resources held inside an entry in their deinit code.
+ */
+int32_t csoundCreateInstanceVariable(CSOUND *csound, INSDS *owner,
+                                     const char *name, size_t nbytes)
+{
+    INSTANCE_VARIABLE *entry;
+    size_t nameBytes;
+    void *data;
+
+    if (UNLIKELY(csound == NULL || owner == NULL || owner->csound != csound ||
+                 name == NULL || name[0] == '\0' || nbytes == 0 ||
+                 nbytes >= (size_t) 0x7F000000L))
+      return CSOUND_ERROR;
+
+    for (entry = owner->instance_variables; entry != NULL; entry = entry->next) {
+      if (strcmp(entry->name, name) != 0)
+        continue;
+      if (entry->active)
+        return CSOUND_ERROR;
+      /* A new note can reuse this allocation, but never the previous value. */
+      if (entry->capacity < nbytes) {
+        data = csound->Calloc(csound, nbytes);
+        if (UNLIKELY(data == NULL))
+          return CSOUND_MEMORY;
+        csound->Free(csound, entry->data);
+        entry->data = data;
+        entry->capacity = nbytes;
+      }
+      else
+        memset(entry->data, 0, nbytes);
+      entry->active = 1;
+      return CSOUND_SUCCESS;
     }
-#else
-    FILE *fp = stderr;
-    if ((attr & CSOUNDMSG_TYPE_MASK) == CSOUNDMSG_STDOUT)
-      fp = stdout;
-    if (!attr || !csound->enableMsgAttr) {
-      fprintf(fp, "%s", str);
+
+    nameBytes = strlen(name) + 1;
+    if (UNLIKELY(nameBytes > SIZE_MAX - sizeof(INSTANCE_VARIABLE)))
+      return CSOUND_ERROR;
+    entry = csound->Calloc(csound, sizeof(INSTANCE_VARIABLE) + nameBytes);
+    if (UNLIKELY(entry == NULL))
+      return CSOUND_MEMORY;
+    entry->data = csound->Calloc(csound, nbytes);
+    if (UNLIKELY(entry->data == NULL)) {
+      csound->Free(csound, entry);
+      return CSOUND_MEMORY;
+    }
+    memcpy(entry->name, name, nameBytes);
+    entry->capacity = nbytes;
+    entry->active = 1;
+    entry->next = owner->instance_variables;
+    owner->instance_variables = entry;
+    return CSOUND_SUCCESS;
+}
+
+/**
+ * Return an instance variable, or NULL for a missing name or invalid owner.
+ * The pointer stays valid through the owner's deinit, including across
+ * reinit and creation of other entries. Do not free it or use it after the
+ * owner deactivates. UGEN storage lasts until its context or factory is
+ * deleted, after all its UGENs have been deleted.
+ */
+void *csoundQueryInstanceVariable(CSOUND *csound, const INSDS *owner,
+                                  const char *name)
+{
+    INSTANCE_VARIABLE *entry;
+
+    if (UNLIKELY(csound == NULL || owner == NULL || owner->csound != csound ||
+                 name == NULL || name[0] == '\0'))
+      return NULL;
+    for (entry = owner->instance_variables; entry != NULL; entry = entry->next)
+      if (entry->active && strcmp(entry->name, name) == 0)
+        return entry->data;
+    return NULL;
+}
+
+/* Run after deinit and before publishing the INSDS for reuse. Do not call
+   during reinit, which can leave other opcodes using their existing entries. */
+void reset_instance_variables(INSDS *owner)
+{
+    INSTANCE_VARIABLE *entry;
+    for (entry = owner->instance_variables; entry != NULL; entry = entry->next)
+      entry->active = 0;
+}
+
+void free_instance_variables(CSOUND *csound, INSDS *owner)
+{
+    INSTANCE_VARIABLE *entry = owner->instance_variables;
+    owner->instance_variables = NULL;
+    while (entry != NULL) {
+      INSTANCE_VARIABLE *next = entry->next;
+      csound->Free(csound, entry->data);
+      csound->Free(csound, entry);
+      entry = next;
+    }
+}
+
+int32_t instance_has_async_refs(const INSDS *ip)
+{
+  return ip != NULL && ATOMIC_GET(ip->async_ref_count) != 0;
+}
+
+int32_t instance_is_reclaimable(const INSDS *ip)
+{
+  return ip != NULL && !ATOMIC_GET8(ip->actflg) &&
+         !instance_has_async_refs(ip) && !ATOMIC_GET(ip->init_running) &&
+         !ATOMIC_GET(ip->turnoff_pending);
+}
+
+static void inactive_instance_lock(CSOUND *csound)
+{
+  if (csound->realtime_locks_initialized)
+    csoundSpinLock(&csound->instance_spinlock);
+}
+
+static void inactive_instance_unlock(CSOUND *csound)
+{
+  if (csound->realtime_locks_initialized)
+    csoundSpinUnLock(&csound->instance_spinlock);
+}
+
+void async_instance_lock(CSOUND *csound)
+{
+  if (csound->realtime_locks_initialized)
+    csoundSpinLock(&csound->async_ref_spinlock);
+}
+
+void async_instance_unlock(CSOUND *csound)
+{
+  if (csound->realtime_locks_initialized)
+    csoundSpinUnLock(&csound->async_ref_spinlock);
+}
+
+static void enqueue_init_turnoff_locked(CSOUND *csound, INSDS *ip)
+{
+  ip->init_turnoff_next = csound->init_turnoff_pending;
+  csound->init_turnoff_pending = ip;
+}
+
+int32_t instance_init_begin(CSOUND *csound, INSDS *ip)
+{
+  int32_t depth;
+  int32_t state;
+  int32_t result = CSOUND_SUCCESS;
+
+  async_instance_lock(csound);
+  depth = ATOMIC_GET(ip->init_running);
+  state = ATOMIC_GET(ip->turnoff_pending);
+  /* FINALIZING belongs to the performance-thread handoff. Do not resurrect an
+     instance after its terminal turnoff has been published. */
+  if (state == INSTANCE_TURNOFF_FINALIZING ||
+      state == INSTANCE_TURNOFF_RECLAIM ||
+      (state == INSTANCE_TURNOFF_REQUESTED && depth == 0)) {
+    result = CSOUND_ERROR;
+  }
+  else
+    ATOMIC_SET(ip->init_running, depth + 1);
+  async_instance_unlock(csound);
+  return result;
+}
+
+INSTANCE_INIT_RESULT instance_init_finish(CSOUND *csound, INSDS *ip)
+{
+  int32_t depth;
+  INSTANCE_INIT_RESULT result = INSTANCE_INIT_DEFERRED;
+
+  async_instance_lock(csound);
+  depth = ATOMIC_GET(ip->init_running);
+  if (depth <= 0) {
+    async_instance_unlock(csound);
+    return result;
+  }
+  ATOMIC_SET(ip->init_running, --depth);
+  if (depth == 0) {
+    if (ATOMIC_GET(ip->turnoff_pending) == INSTANCE_TURNOFF_REQUESTED) {
+      ATOMIC_SET(ip->init_done, 0);
+      ATOMIC_SET(ip->turnoff_pending, INSTANCE_TURNOFF_FINALIZING);
+      enqueue_init_turnoff_locked(csound, ip);
+      result = INSTANCE_INIT_TURNOFF;
+    }
+    else if (ATOMIC_GET(ip->turnoff_pending) == INSTANCE_TURNOFF_NONE)
+      result = INSTANCE_INIT_COMPLETE;
+  }
+  async_instance_unlock(csound);
+  return result;
+}
+
+void instance_init_request_turnoff(CSOUND *csound, INSDS *ip)
+{
+  int32_t state;
+
+  async_instance_lock(csound);
+  state = ATOMIC_GET(ip->turnoff_pending);
+  ATOMIC_SET(ip->init_done, 0);
+  if (state != INSTANCE_TURNOFF_FINALIZING &&
+      state != INSTANCE_TURNOFF_RECLAIM) {
+    if (ATOMIC_GET(ip->init_running) > 0) {
+      ATOMIC_SET(ip->turnoff_pending, INSTANCE_TURNOFF_REQUESTED);
+    }
+    else {
+      ATOMIC_SET(ip->turnoff_pending, INSTANCE_TURNOFF_FINALIZING);
+      enqueue_init_turnoff_locked(csound, ip);
+    }
+  }
+  async_instance_unlock(csound);
+}
+
+void instance_process_pending_turnoffs(CSOUND *csound)
+{
+  INSDS *pending;
+  INSDS *reclaim = NULL;
+  int32_t allocLocked = 0;
+
+#if CSOUND_SPINLOCK_AVAILABLE
+  if (csound->realtime_locks_initialized) {
+    if (csoundSpinTryLock(&csound->alloc_spinlock) != CSOUND_SUCCESS)
       return;
+    allocLocked = 1;
+  }
+#endif
+
+  async_instance_lock(csound);
+  pending = csound->init_turnoff_pending;
+  csound->init_turnoff_pending = NULL;
+  async_instance_unlock(csound);
+
+  while (pending != NULL) {
+    INSDS *ip = pending;
+    INSDS *next = ip->init_turnoff_next;
+    int32_t finalize = 0;
+    int32_t freeNow = 0;
+    int32_t waitForReaders = 0;
+    int32_t state;
+
+    ip->init_turnoff_next = NULL;
+    async_instance_lock(csound);
+    state = ATOMIC_GET(ip->turnoff_pending);
+    finalize = state == INSTANCE_TURNOFF_FINALIZING &&
+               ATOMIC_GET(ip->init_running) == 0;
+    async_instance_unlock(csound);
+
+    if (finalize) {
+      if (ATOMIC_GET8(ip->actflg) == 0)
+        ATOMIC_SET8(ip->actflg, 1);
+      xturnoff_now_internal(csound, ip, 1);
     }
-    if ((attr & CSOUNDMSG_TYPE_MASK) == CSOUNDMSG_ORCH)
-      if (attr & CSOUNDMSG_BG_COLOR_MASK)
-        fprintf(fp, "\033[4%cm", ((attr & 0x70) >> 4) + '0');
-    if (attr & CSOUNDMSG_FG_ATTR_MASK) {
-      if (attr & CSOUNDMSG_FG_BOLD)
-        fprintf(fp, "\033[1m");
-      if (attr & CSOUNDMSG_FG_UNDERLINE)
-        fprintf(fp, "\033[4m");
+
+    async_instance_lock(csound);
+    state = ATOMIC_GET(ip->turnoff_pending);
+    if (state == INSTANCE_TURNOFF_FINALIZING ||
+        state == INSTANCE_TURNOFF_RECLAIM) {
+      waitForReaders = ATOMIC_GET(ip->free_pending) && !ip->linked &&
+                       instance_has_async_refs(ip);
+      if (waitForReaders) {
+        ATOMIC_SET(ip->turnoff_pending, INSTANCE_TURNOFF_RECLAIM);
+        enqueue_init_turnoff_locked(csound, ip);
+      }
+      else {
+        freeNow = ATOMIC_GET(ip->free_pending) && !ip->linked;
+        ATOMIC_SET(ip->free_pending, 0);
+        ATOMIC_SET(ip->turnoff_pending, INSTANCE_TURNOFF_NONE);
+      }
     }
-    if (attr & CSOUNDMSG_FG_COLOR_MASK)
-      fprintf(fp, "\033[3%cm", (attr & 7) + '0');
+    async_instance_unlock(csound);
+
+    if (freeNow) {
+      ip->init_turnoff_next = reclaim;
+      reclaim = ip;
+    }
+    pending = next;
+  }
+
+  if (allocLocked)
+    csoundSpinUnLock(&csound->alloc_spinlock);
+
+  /* Unlinked destruction may release files and aggregate values. Keep that
+     work outside the short allocation-lock section used for active chains. */
+  while (reclaim != NULL) {
+    INSDS *ip = reclaim;
+    reclaim = ip->init_turnoff_next;
+    ip->init_turnoff_next = NULL;
+    free_unlinked_instance(csound, ip);
+  }
+}
+
+static INSDS *take_inactive_instance(CSOUND *csound, INSTRTXT *tp)
+{
+  INSDS *current;
+  INSDS *previous = NULL;
+
+  inactive_instance_lock(csound);
+  current = tp->act_instance;
+  while (current != NULL && !instance_is_reclaimable(current)) {
+    previous = current;
+    current = current->nxtact;
+  }
+  if (current == NULL) {
+    inactive_instance_unlock(csound);
+    return NULL;
+  }
+  if (previous == NULL)
+    tp->act_instance = current->nxtact;
+  else
+    previous->nxtact = current->nxtact;
+  current->nxtact = NULL;
+  inactive_instance_unlock(csound);
+  /* A previous deactivation may have deferred this close until its final
+     asynchronous reader released the instance. No reader remains here. */
+  if (current->fdchp != NULL)
+    fdchclose(csound, current);
+  return current;
+}
+
+INSDS *allocate_or_take_instance(CSOUND *csound, INSTRTXT *tp,
+                                 int32_t insno)
+{
+  INSDS *ip;
+
+  ip = take_inactive_instance(csound, tp);
+  if (ip != NULL)
+    return ip;
+
+  /* Building an instance may allocate and initialize a large opcode graph.
+     Do that work before taking the instance-list lock, then publish the
+     completed instance in one short critical section. It is returned directly,
+     so it never enters the free list. */
+  ip = instantiate(csound, insno, 0);
+  if (UNLIKELY(ip == NULL))
+    return NULL;
+
+  tp = ip->instr;
+  inactive_instance_lock(csound);
+  ip->prvinstance = tp->lst_instance;
+  if (tp->lst_instance != NULL)
+    tp->lst_instance->nxtinstance = ip;
+  else
+    tp->instance = ip;
+  tp->lst_instance = ip;
+  ip->insno = (int16_t) insno;
+  ip->linked = 1;
+  inactive_instance_unlock(csound);
+  return ip;
+}
+
+void recycle_inactive_instance(CSOUND *csound, INSDS *ip)
+{
+  INSTRTXT *tp = ip->instr;
+
+  /* The caller owns an inactive instance detached from this reuse list. */
+  inactive_instance_lock(csound);
+  ip->nxtact = tp->act_instance;
+  tp->act_instance = ip;
+  inactive_instance_unlock(csound);
+}
+
+static void alloc_queue_lock(CSOUND *csound)
+{
+  csoundSpinLock(&csound->alloc_queue_spinlock);
+}
+
+static void alloc_queue_unlock(CSOUND *csound)
+{
+  csoundSpinUnLock(&csound->alloc_queue_spinlock);
+}
+
+/* These locks are reachable from the performance thread. A platform without
+   a real spin primitive must reject asynchronous realtime mode rather than
+   silently substitute a blocking mutex or Csound's no-op fallback. */
+int32_t realtime_spin_lock_init(spin_lock_t *spinlock)
+{
+#if CSOUND_SPINLOCK_AVAILABLE
+  return csoundSpinLockInit(spinlock);
+#else
+  IGN(spinlock);
+  return CSOUND_ERROR;
+#endif
+}
+
+void realtime_spin_lock_destroy(spin_lock_t *spinlock)
+{
+#if defined(__GNUC__) && defined(HAVE_PTHREAD_SPIN_LOCK)
+  pthread_spin_destroy(spinlock);
+#else
+  IGN(spinlock);
+#endif
+}
+
+int32_t alloc_queue_lock_init(CSOUND *csound)
+{
+  csound->alloc_queue_items = 0;
+  csound->alloc_queue_active = 0;
+  csound->alloc_queue_wp = 0;
+  return realtime_spin_lock_init(&csound->alloc_queue_spinlock);
+}
+
+void alloc_queue_lock_destroy(CSOUND *csound)
+{
+  realtime_spin_lock_destroy(&csound->alloc_queue_spinlock);
+}
+
+/* Reserve, fill, and publish a realtime allocation request. */
+int32_t alloc_queue_enqueue(CSOUND *csound, const ALLOC_DATA *data)
+{
+  unsigned long wp;
+  int32_t result = CSOUND_SUCCESS;
+
+  if (UNLIKELY(csound->alloc_queue == NULL))
+    return CSOUND_ERROR;
+
+  alloc_queue_lock(csound);
+  if (UNLIKELY(csound->alloc_queue_items >= MAX_ALLOC_QUEUE)) {
+    result = CSOUND_ERROR;
+  }
+  else {
+    wp = csound->alloc_queue_wp;
+    csound->alloc_queue[wp] = *data;
+    csound->alloc_queue_wp = wp + 1 < MAX_ALLOC_QUEUE ? wp + 1 : 0;
+    csound->alloc_queue_items++;
+  }
+  alloc_queue_unlock(csound);
+  return result;
+}
+
+static int32_t alloc_queue_dequeue(CSOUND *csound, ALLOC_DATA *data,
+                                   unsigned long *readPosition)
+{
+  int32_t result = 0;
+
+  alloc_queue_lock(csound);
+  if (csound->alloc_queue_items > 0) {
+    *data = csound->alloc_queue[*readPosition];
+    *readPosition = *readPosition + 1 < MAX_ALLOC_QUEUE ?
+      *readPosition + 1 : 0;
+    csound->alloc_queue_items--;
+    csound->alloc_queue_active++;
+    result = 1;
+  }
+  alloc_queue_unlock(csound);
+  return result;
+}
+
+int32_t alloc_queue_has_pending(CSOUND *csound)
+{
+  int32_t result;
+
+  alloc_queue_lock(csound);
+  result = csound->alloc_queue_items > 0 || csound->alloc_queue_active > 0;
+  alloc_queue_unlock(csound);
+  return result;
+}
+
+static void alloc_queue_complete(CSOUND *csound)
+{
+  alloc_queue_lock(csound);
+  csound->alloc_queue_active--;
+  alloc_queue_unlock(csound);
+}
+
+static size_t evtblk_strarg_size(const EVTBLK *src)
+{
+  char *end = src->strarg;
+  int32_t n = src->scnt;
+
+  if (end == NULL)
+    return 0;
+
+  if (n <= 0)
+    return strlen(end) + 1;
+
+  while (n--)
+    end += strlen(end) + 1;
+  return (size_t)(end - src->strarg);
+}
+
+static void free_queued_evtblk_pfields(CSOUND *csound, EVTBLK *evt)
+{
+  if (evt->p != NULL) {
+    csound->Free(csound, evt->p);
+    evt->p = NULL;
+  }
+}
+
+static void free_queued_evtblk(CSOUND *csound, EVTBLK *evt)
+{
+  free_queued_evtblk_pfields(csound, evt);
+  if (evt->strarg != NULL) {
+    csound->Free(csound, evt->strarg);
+    evt->strarg = NULL;
+  }
+}
+
+static int32_t copy_evtblk_for_queue(CSOUND *csound, EVTBLK *dst,
+                                     const EVTBLK *src)
+{
+  *dst = *src;
+  dst->p = NULL;
+  dst->strarg = NULL;
+
+  if (src->p != NULL && src->pcnt >= 0) {
+    size_t bytes = sizeof(cs_float) * ((size_t)src->pcnt + 1U);
+    dst->p = (cs_float *) csound->Malloc(csound, bytes);
+    if (UNLIKELY(dst->p == NULL))
+      return CSOUND_MEMORY;
+    memcpy(dst->p, src->p, bytes);
+  }
+
+  if (src->strarg != NULL) {
+    size_t bytes = evtblk_strarg_size(src);
+    dst->strarg = (char *) csound->Malloc(csound, bytes);
+    if (UNLIKELY(dst->strarg == NULL)) {
+      free_queued_evtblk(csound, dst);
+      return CSOUND_MEMORY;
+    }
+    memcpy(dst->strarg, src->strarg, bytes);
+  }
+
+  return CSOUND_SUCCESS;
+}
+
+/* Helper function to get type string from argument without unsafe casting */
+static char* get_arg_type_from_arg(ARG *arg, CS_VARIABLE **var) {
+    if (arg->type == ARG_CONSTANT) {
+      *var = NULL;
+      return "c";
+    } else if (arg->type == ARG_STRING) {
+      *var = NULL;
+      return "S";
+    } else if (arg->type == ARG_PFIELD) {
+      *var = NULL;
+      return "p";
+    } else if (arg->type == ARG_LABEL) {
+      *var = NULL;
+      return "l";
+    } else {
+      *var = (CS_VARIABLE *) arg->argPtr;
+      return (*var)->varType->varTypeName;
+    }
+}
+
+static void print_messages(CSOUND *csound, int32_t attr, const char *str){
+#if defined(WIN32)
+  switch (attr & CSOUNDMSG_TYPE_MASK) {
+  case CSOUNDMSG_ERROR:
+  case CSOUNDMSG_WARNING:
+  case CSOUNDMSG_REALTIME:
+    fprintf(stderr, str);
+    break;
+  default:
+    fprintf(stdout, str);
+  }
+#else
+  FILE *fp = stderr;
+  if ((attr & CSOUNDMSG_TYPE_MASK) == CSOUNDMSG_STDOUT)
+    fp = stdout;
+  if (!attr || !csound->enableMsgAttr) {
     fprintf(fp, "%s", str);
-    fprintf(fp, "\033[m");
+    return;
+  }
+  if ((attr & CSOUNDMSG_TYPE_MASK) == CSOUNDMSG_ORCH)
+    if (attr & CSOUNDMSG_BG_COLOR_MASK)
+      fprintf(fp, "\033[4%cm", ((attr & 0x70) >> 4) + '0');
+  if (attr & CSOUNDMSG_FG_ATTR_MASK) {
+    if (attr & CSOUNDMSG_FG_BOLD)
+      fprintf(fp, "\033[1m");
+    if (attr & CSOUNDMSG_FG_UNDERLINE)
+      fprintf(fp, "\033[4m");
+  }
+  if (attr & CSOUNDMSG_FG_COLOR_MASK)
+    fprintf(fp, "\033[3%cm", (attr & 7) + '0');
+  fprintf(fp, "%s", str);
+  fprintf(fp, "\033[m");
 #endif
 }
 
 #define QUEUESIZ 64
 
-static void message_string_enqueue(CSOUND *csound, int attr,
-    const char *str) {
-    unsigned long wp = csound->message_string_queue_wp;
-    csound->message_string_queue[wp].attr = attr;
-    strNcpy(csound->message_string_queue[wp].str, str, MAX_MESSAGE_STR);
-    //csound->message_string_queue[wp].str[MAX_MESSAGE_STR-1] = '\0';
-    csound->message_string_queue_wp = wp + 1 < QUEUESIZ ? wp + 1 : 0;
-    ATOMIC_INCR(csound->message_string_queue_items);
+static void message_string_enqueue(CSOUND *csound, int32_t attr,
+                                   const char *str) {
+  unsigned long wp = csound->message_string_queue_wp;
+  csound->message_string_queue[wp].attr = attr;
+  strNcpy(csound->message_string_queue[wp].str, str, MAX_MESSAGE_STR);
+  //csound->message_string_queue[wp].str[MAX_MESSAGE_STR-1] = '\0';
+  csound->message_string_queue_wp = wp + 1 < QUEUESIZ ? wp + 1 : 0;
+  ATOMIC_INCR(csound->message_string_queue_items);
 }
 
-static void no_op(CSOUND *csound, int attr,
+static void no_op(CSOUND *csound, int32_t attr,
+    /* Matches the message callback signature. va_list differs between platforms. */
+    /* NOLINTNEXTLINE(readability-non-const-parameter) */
                   const char *format, va_list args) {
   IGN(csound);
   IGN(attr);
@@ -101,147 +668,246 @@ static void no_op(CSOUND *csound, int attr,
   IGN(args);
 };
 
-
- /* do init pass for this instr */
-static int init_pass(CSOUND *csound, INSDS *ip) {
-  int error = 0;
+/* do init pass for this instr */
+static int32_t init_pass(CSOUND *csound, INSDS *ip) {
+  int32_t error = 0;
+  OPDS *ids = csound->ids;
+  INSDS *curip = csound->curip;
   if(csound->oparms->realtime)
     csoundLockMutex(csound->init_pass_threadlock);
   csound->curip = ip;
   csound->ids = (OPDS *)ip;
-  csound->mode = 1;
+  ip->init_pass++;
   while (error == 0 && (csound->ids = csound->ids->nxti) != NULL) {
+    csound->mode = 1;
     csound->op = csound->ids->optext->t.oentry->opname;
-    if (UNLIKELY(csound->oparms->odebug))
-      csound->Message(csound, "init %s:\n", csound->op);
-    error = (*csound->ids->iopadr)(csound, csound->ids);
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
+      csound->Message(csound, "init %s (%p):\n", csound->op, csound->ids);
+     }
+    error = (*csound->ids->init)(csound, csound->ids);
+    csound->mode = 0;
   }
-  csound->mode = 0;
+  csound->ids = ids;
+  csound->curip = curip;
+
+  if (error == 0) {
+    recycle_init_only_udo_instances(csound, ip);
+  }
+
   if(csound->oparms->realtime)
     csoundUnlockMutex(csound->init_pass_threadlock);
+
   return error;
 }
 
-int rireturn(CSOUND *csound, void *p);
+int32_t rireturn(CSOUND *csound, void *p);
+
 /* do reinit pass */
-static int reinit_pass(CSOUND *csound, INSDS *ip, OPDS *ids) {
-  int error = 0;
+static int32_t reinit_pass(CSOUND *csound, INSDS *ip, OPDS *ids) {
+  int32_t error = 0;
   if(csound->oparms->realtime) {
     csoundLockMutex(csound->init_pass_threadlock);
   }
+  /* Each queued pass owns a complete reinit interval. An earlier queued pass
+     may already have cleared these flags before this one starts. */
+  csound->reinitflag = ip->reinitflag = 1;
   csound->curip = ip;
   csound->ids = ids;
   csound->mode = 1;
+  ip->init_pass++;
   while (error == 0 && (csound->ids = csound->ids->nxti) != NULL &&
-         (csound->ids->iopadr != (SUBR) rireturn)){
+         (csound->ids->init != (SUBR) rireturn)){
     csound->op = csound->ids->optext->t.oentry->opname;
-    if (UNLIKELY(csound->oparms->odebug))
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
       csound->Message(csound, "reinit %s:\n", csound->op);
-    error = (*csound->ids->iopadr)(csound, csound->ids);
+    error = (*csound->ids->init)(csound, csound->ids);
   }
   csound->mode = 0;
 
-  ATOMIC_SET8(ip->actflg, 1);
   csound->reinitflag = ip->reinitflag = 0;
   if(csound->oparms->realtime)
     csoundUnlockMutex(csound->init_pass_threadlock);
   return error;
 }
 
+static int32_t realtime_init_pass(CSOUND *csound, INSDS *ip)
+{
+  int32_t error;
+
+  /* Init opcodes may acquire alloc_spinlock; the init mutex remains held. */
+  csoundSpinUnLock(&csound->alloc_spinlock);
+  error = init_pass(csound, ip);
+  csoundSpinLock(&csound->alloc_spinlock);
+  return error;
+}
+
+static int32_t realtime_reinit_pass(CSOUND *csound, INSDS *ip, OPDS *ids)
+{
+  int32_t error;
+
+  /* Reinit has the same lock requirements as the initial pass. */
+  csoundSpinUnLock(&csound->alloc_spinlock);
+  error = reinit_pass(csound, ip, ids);
+  csoundSpinLock(&csound->alloc_spinlock);
+  return error;
+}
 
 /*
  * creates a thread to process instance allocations
  */
 uintptr_t event_insert_thread(void *p) {
   CSOUND *csound = (CSOUND *) p;
-  ALLOC_DATA *inst = csound->alloc_queue;
   float wakeup = (1000*csound->ksmps/csound->esr);
   unsigned long rp = 0, items, rpm = 0;
   message_string_queue_t *mess = NULL;
   void (*csoundMessageStringCallback)(CSOUND *csound,
-                                      int attr,
+                                      int32_t attr,
                                       const char *str) = NULL;
   void (*csoundMessageCallback)(CSOUND *csound,
-                                int attr,
+                                int32_t attr,
                                 const char *format,
                                 va_list args)
-                       = csound->csoundMessageCallback_;
- if(csound->oparms_.msglevel){
-  if(csound->message_string_queue == NULL)
-    csound->message_string_queue = (message_string_queue_t *)
-      csound->Calloc(csound, QUEUESIZ*sizeof(message_string_queue_t));
-  mess = csound->message_string_queue;
-  if(csound->csoundMessageStringCallback)
-    csoundMessageStringCallback = csound->csoundMessageStringCallback;
-  else csoundMessageStringCallback = print_messages;
-  csoundSetMessageStringCallback(csound, message_string_enqueue);
- } else {
-  csoundSetMessageCallback(csound, no_op);
- }
+    = csound->csoundMessageCallback_;
+  if(csound->oparms_.msglevel){
+    if(csound->message_string_queue == NULL)
+      csound->message_string_queue = (message_string_queue_t *)
+        csound->Calloc(csound, QUEUESIZ*sizeof(message_string_queue_t));
+    mess = csound->message_string_queue;
+    if(csound->csoundMessageStringCallback)
+      csoundMessageStringCallback = csound->csoundMessageStringCallback;
+    else csoundMessageStringCallback = print_messages;
+    csoundSetMessageStringCallback(csound, message_string_enqueue);
+  } else {
+    csoundSetMessageCallback(csound, no_op);
+  }
 
-  while(csound->event_insert_loop) {
-    // get the value of items_to_alloc
-    items = ATOMIC_GET(csound->alloc_queue_items);
-    if(items == 0)
-       csoundSleep((int) ((int) wakeup > 0 ? wakeup : 1));
-    else while(items) {
-        if (inst[rp].type == 3)  {
-          INSDS *ip = inst[rp].ip;
-          OPDS *ids = inst[rp].ids;
-          csoundSpinLock(&csound->alloc_spinlock);
-          reinit_pass(csound, ip, ids);
-          csoundSpinUnLock(&csound->alloc_spinlock);
-          ATOMIC_SET(ip->init_done, 1);
+  for (;;) {
+    ALLOC_DATA data;
+    uint32_t processed = 0;
+
+    while (processed < MAX_ALLOC_QUEUE &&
+           alloc_queue_dequeue(csound, &data, &rp)) {
+      /* Keep the common lock order: init mutex, then allocation lock. */
+      if (csound->init_pass_threadlock)
+        csoundLockMutex(csound->init_pass_threadlock);
+      switch (data.type) {
+        case ALLOC_DATA_MERGE_STATE: {
+          ENGINE_STATE *engine_state = data.engine_state;
+          TYPE_TABLE *type_table = data.type_table;
+          OPDS *ids = data.ids;
+          merge_state_realtime(csound, engine_state, type_table, ids);
+          break;
         }
-        if (inst[rp].type == 2)  {
-          INSDS *ip = inst[rp].ip;
+
+        case ALLOC_DATA_REINIT_PASS: {
+          INSDS *ip = data.ip;
+          OPDS *ids = data.ids;
+          int32_t error;
+          INSTANCE_INIT_RESULT initResult;
+          csoundSpinLock(&csound->alloc_spinlock);
+          error = realtime_reinit_pass(csound, ip, ids);
+          initResult = instance_init_finish(csound, ip);
+          if (error == 0 && initResult != INSTANCE_INIT_TURNOFF) {
+            ATOMIC_SET8(ip->actflg, 1);
+            if (initResult == INSTANCE_INIT_COMPLETE)
+              ATOMIC_SET(ip->init_done, 1);
+          }
+          else
+            ATOMIC_SET(ip->init_done, 0);
+          if (error != 0)
+            instance_init_request_turnoff(csound, ip);
+          csoundSpinUnLock(&csound->alloc_spinlock);
+          break;
+        }
+
+        case ALLOC_DATA_INIT_PASS: {
+          INSDS *ip = data.ip;
+          int32_t error;
+          INSTANCE_INIT_RESULT initResult;
           ATOMIC_SET(ip->init_done, 0);
+          if (UNLIKELY(instance_init_begin(csound, ip) != CSOUND_SUCCESS))
+            break;
           csoundSpinLock(&csound->alloc_spinlock);
-          init_pass(csound, ip);
+          error = realtime_init_pass(csound, ip);
+          initResult = instance_init_finish(csound, ip);
+          if (initResult == INSTANCE_INIT_COMPLETE && error == 0)
+            ATOMIC_SET(ip->init_done, 1);
+          if (error != 0)
+            instance_init_request_turnoff(csound, ip);
           csoundSpinUnLock(&csound->alloc_spinlock);
-          ATOMIC_SET(ip->init_done, 1);
+          break;
         }
-        if(inst[rp].type == 1) {
-          csoundSpinLock(&csound->alloc_spinlock);
-          insert_midi(csound, inst[rp].insno, inst[rp].chn, &inst[rp].mep);
-          csoundSpinUnLock(&csound->alloc_spinlock);
-        }
-       if(inst[rp].type == 0)  {
-          csoundSpinLock(&csound->alloc_spinlock);
-          insert_event(csound, inst[rp].insno, &inst[rp].blk);
-          csoundSpinUnLock(&csound->alloc_spinlock);
-        }
-        // decrement the value of items_to_alloc
-        ATOMIC_DECR(csound->alloc_queue_items);
-        items--;
-        rp = rp + 1 < MAX_ALLOC_QUEUE ? rp + 1 : 0;
-      }
-     items = ATOMIC_GET(csound->message_string_queue_items);
-     while(items) {
-       if(mess != NULL)
-         csoundMessageStringCallback(csound, mess[rpm].attr,  mess[rpm].str);
-       ATOMIC_DECR(csound->message_string_queue_items);
-       items--;
-       rpm = rpm + 1 < QUEUESIZ ? rpm + 1 : 0;
-     }
 
+        case ALLOC_DATA_MIDI_EVENT:
+          csoundSpinLock(&csound->alloc_spinlock);
+          insert_midi(csound, data.insno, data.chn, &data.mep);
+          csoundSpinUnLock(&csound->alloc_spinlock);
+          break;
+
+        case ALLOC_DATA_SCORE_EVENT:
+        {
+          int32_t result;
+          csoundSpinLock(&csound->alloc_spinlock);
+          result = insert(csound, data.insno, &data.blk);
+          csoundSpinUnLock(&csound->alloc_spinlock);
+          if (result == 0) {
+            /* insert() copies p-fields, but keeps strarg for INSDS::strarg. */
+            free_queued_evtblk_pfields(csound, &data.blk);
+            data.blk.strarg = NULL;
+          }
+          else {
+            free_queued_evtblk(csound, &data.blk);
+          }
+          break;
+        }
+      }
+      if (csound->init_pass_threadlock)
+        csoundUnlockMutex(csound->init_pass_threadlock);
+      alloc_queue_complete(csound);
+      processed++;
+    }
+    diskin2_async_drain_deferred(csound);
+    if(processed == 0)
+      csoundSleep((int32_t) ((int32_t) wakeup > 0 ? wakeup : 1));
+    items = ATOMIC_GET(csound->message_string_queue_items);
+    while(items) {
+      if(mess != NULL)
+        csoundMessageStringCallback(csound, mess[rpm].attr,  mess[rpm].str);
+      ATOMIC_DECR(csound->message_string_queue_items);
+      items--;
+      rpm = rpm + 1 < QUEUESIZ ? rpm + 1 : 0;
+    }
+    /* Stop requests reject new work at the engine boundary. Drain all
+       published work so init depths and copied score data are not stranded. */
+    if (!csound->event_insert_loop && !alloc_queue_has_pending(csound))
+      break;
   }
 
   csoundSetMessageCallback(csound, csoundMessageCallback);
   return (uintptr_t) NULL;
 }
 
-int init0(CSOUND *csound)
+int32_t init0(CSOUND *csound)
 {
-  INSTRTXT  *tp = csound->engineState.instrtxtp[0];
+  INSTRTXT  *tp = (csound->engineState.instrtxtp != NULL)
+                    ? csound->engineState.instrtxtp[0] : NULL;
   INSDS     *ip;
 
-  instance(csound, 0);                            /* allocate instr 0     */
-  csound->curip = ip = tp->act_instance;
-  tp->act_instance = ip->nxtact;
+  if (UNLIKELY(tp == NULL))
+    return csound->InitError(csound, "%s",
+                             Str("instrument 0 is not compiled"));
+
+  csound->curip = ip = allocate_or_take_instance(csound, tp, 0);
+  if (UNLIKELY(ip == NULL))
+    return csound->InitError(csound, "%s",
+                             Str("could not allocate instrument 0"));
   csound->ids = (OPDS*) ip;
   tp->active++;
   ip->actflg++;
+  ip->esr = csound->esr;
+  ip->pidsr = csound->pidsr;
+  ip->sicvt = csound->sicvt;
+  ip->onedsr = csound->onedsr;
   ip->ksmps = csound->ksmps;
   ip->ekr = csound->ekr;
   ip->kcounter = csound->kcounter;
@@ -250,84 +916,189 @@ int init0(CSOUND *csound)
   ip->kicvt = csound->kicvt;
   csound->inerrcnt = 0;
   csound->mode = 1;
+  ip->init_pass++;
+
   while ((csound->ids = csound->ids->nxti) != NULL) {
     csound->op = csound->ids->optext->t.oentry->opname;
-    (*csound->ids->iopadr)(csound, csound->ids);  /*   run all i-code     */
+    (*csound->ids->init)(csound, csound->ids);  /*   run all i-code     */
   }
   csound->mode = 0;
   return csound->inerrcnt;                        /*   return errcnt      */
 }
 
-static void putop(CSOUND *csound, TEXT *tp)
+static int32_t print_opcall(CSOUND *csound, TEXT *tp)
 {
-  int n, nn;
+  int32_t n, nn;
+  char *name;
+  ARG *arg;
 
-  if ((n = tp->outlist->count) != 0) {
-    nn = 0;
-    while (n--)
-      csound->Message(csound, "%s\t", tp->outlist->arg[nn++]);
+  if(!strcmp(tp->opcod, "endin") ||
+     !strcmp(tp->opcod, "endop")) {
+    csound->Message(csound, "%sn", tp->opcod);
+    return 0;
   }
-  else
-    csound->Message(csound, "\t");
-  csound->Message(csound, "%s\t", tp->opcod);
-  if ((n = tp->inlist->count) != 0) {
+
+  if (tp->outlist && (n = tp->outlist->count) != 0) {
     nn = 0;
-    while (n--)
-      csound->Message(csound, "%s\t", tp->inlist->arg[nn++]);
+    arg = tp->outArgs;
+    CS_VARIABLE *var = NULL;
+    char *type = get_arg_type_from_arg(arg, &var);
+    char  arrtype[64];
+
+    while (n-- > 1) {
+      if(*type == '[') {
+        if (var != NULL && var->subType != NULL) {
+          snprintf(arrtype, 64, "%s[]", var->subType->varTypeName);
+        } else {
+          snprintf(arrtype, 64, "unknown[]");
+        }
+        type = arrtype;
+      }
+      csound->Message(csound, "%s:%s,", tp->outlist->arg[nn++], type);
+      arg = arg->next;
+      type = get_arg_type_from_arg(arg, &var);
+    }
+    if(*type == '[') {
+      if (var != NULL && var->subType != NULL) {
+        snprintf(arrtype, 64, "%s[]", var->subType->varTypeName);
+      } else {
+        snprintf(arrtype, 64, "unknown[]");
+      }
+      type = arrtype;
+    }
+    csound->Message(csound, "%s:%s ", tp->outlist->arg[nn++], type);
   }
-  csound->Message(csound, "\n");
+  name = strip_extension(csound, tp->opcod);
+  csound->Message(csound, "%s ", name);
+  if (tp->inlist  && (n = tp->inlist->count) != 0) {
+    nn = 0;
+    arg = tp->inArgs;
+    CS_VARIABLE *var = NULL;
+    char *type = get_arg_type_from_arg(arg, &var);
+    char  arrtype[64];
+
+    while (n-- > 1) {
+      if(*type == '[') {
+        if (var != NULL && var->subType != NULL) {
+          snprintf(arrtype, 64, "%s[]", var->subType->varTypeName);
+        } else {
+          snprintf(arrtype, 64, "unknown[]");
+        }
+        type = arrtype;
+      }
+      csound->Message(csound, "%s:%s,", tp->inlist->arg[nn++], type);
+      arg = arg->next;
+      type = get_arg_type_from_arg(arg, &var);
+    }
+    if(*type == '[') {
+      if (var != NULL && var->subType != NULL) {
+        snprintf(arrtype, 64, "%s[]", var->subType->varTypeName);
+      } else {
+        snprintf(arrtype, 64, "unknown[]");
+      }
+      type = arrtype;
+    }
+    csound->Message(csound, "%s:%s", tp->inlist->arg[nn++], type);
+  }
+  csound->Message(csound,"\n");
+  return 1;
 }
 
 static void set_xtratim(CSOUND *csound, INSDS *ip)
 {
   if (UNLIKELY(ip->relesing))
     return;
-  ip->offtim = (csound->icurTime +
-                ip->ksmps * (double) ip->xtratim)/csound->esr;
-  ip->offbet = csound->curBeat + (csound->curBeat_inc * (double) ip->xtratim);
+  ip->offtim = (csound->icurTimeSamples +
+                ip->ksmps * (cs_double) ip->xtratim)/csound->esr;
+  ip->offbet = csound->curBeat + (csound->curBeat_inc * (cs_double) ip->xtratim);
   ip->relesing = 1;
   csound->engineState.instrtxtp[ip->insno]->pending_release++;
 }
 
-/* insert an instr copy into active list */
-/*      then run an init pass            */
-int insert(CSOUND *csound, int insno, EVTBLK *newevtp) {
-
-  if(csound->oparms->realtime) {
-    unsigned long wp = csound->alloc_queue_wp;
-    csound->alloc_queue[wp].insno = insno;
-    csound->alloc_queue[wp].blk =  *newevtp;
-    csound->alloc_queue[wp].type = 0;
-    csound->alloc_queue_wp = wp + 1 < MAX_ALLOC_QUEUE ? wp + 1 : 0;
-    ATOMIC_INCR(csound->alloc_queue_items);
-    return 0;
-  }
-  else return insert_event(csound, insno, newevtp);
+static void release_cpu_power(CSOUND *csound, INSTRTXT *tp)
+{
+  if (tp->cpuload > FL(0.0))
+    csound->cpu_power_busy -= tp->cpuload;
 }
 
-int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp)
+/* insert an instr copy into active list */
+/*      then run an init pass            */
+int32_t insert_event(CSOUND *csound, int32_t insno, EVTBLK *newevtp) {
+
+  if(csound->oparms->realtime) {
+    ALLOC_DATA data = { 0 };
+    int32_t result;
+    data.insno = insno;
+    data.type = ALLOC_DATA_SCORE_EVENT;
+    result = copy_evtblk_for_queue(csound, &data.blk, newevtp);
+    if (UNLIKELY(result != CSOUND_SUCCESS))
+      return result;
+    result = alloc_queue_enqueue(csound, &data);
+    if (UNLIKELY(result != CSOUND_SUCCESS))
+      free_queued_evtblk(csound, &data.blk);
+    return result;
+  }
+  else return insert(csound, insno, newevtp);
+}
+
+void maxalloc_turnoff(CSOUND *csound, int32_t insno) {
+  INSTRTXT  *tp = csound->engineState.instrtxtp[insno];
+
+  //turnoff mode: 0 do not turn off, 1 turnoff oldest, 2 turnoff newest
+  if (tp->turnoff_mode > 0) {
+    INSDS *ip, *ip2, *nip;
+    ip = &(csound->actanchor);
+    ip2 = NULL;
+    while ((ip = ip->nxtact) != NULL && (int32_t) ip->insno != insno);
+
+    if (ip != NULL) {
+      do {
+        nip = ip->nxtact;
+        ip2 = ip;
+        if (tp->turnoff_mode == 1) //turnoff oldest
+          break;
+        ip = nip;
+      } while (ip != NULL && (int32_t) ip->insno == insno);
+    }
+    if (ip2 != NULL) {
+      xturnoff_now(csound, ip2);
+      if (!ip2->actflg) {  /* if current note was deactivated: */
+        while (ip2->pds != NULL && ip2->pds->nxtp != NULL)
+          ip2->pds = ip2->pds->nxtp;            /* loop to last opds */
+      }
+    }
+  }
+}
+
+
+/* insert new event with different instance orderings
+   order = 0 - standard order
+   order = 1 - add to the end of chain
+*/
+static int32_t insert_new(CSOUND *csound, int32_t insno,
+                   EVTBLK *newevtp, int32_t order)
 {
   INSTRTXT  *tp;
-  INSDS     *ip, *prvp, *nxtp;
+  INSDS     *ip;
   OPARMS    *O = csound->oparms;
   CS_VAR_MEM *pfields = NULL;        /* *** was uninitialised *** */
-  int tie=0, i;
-  int  n, error = 0;
-  MYFLT  *flp, *fep;
+  int32_t   tie = 0, i;
+  int32_t  n, error = 0;
+  INSTANCE_INIT_RESULT initResult;
+  cs_float  *flp, *fep;
 
   if (UNLIKELY(csound->advanceCnt))
     return 0;
-  if (UNLIKELY(O->odebug)) {
+  if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
     char *name = csound->engineState.instrtxtp[insno]->insname;
     if (UNLIKELY(name))
-        csound->Message(csound, Str("activating instr %s at %"PRIi64"\n"),
-                      name, csound->icurTime);
+      csound->Message(csound, Str("activating instr %s at %"PRIi64"\n"),
+                      name, csound->icurTimeSamples);
     else
-        csound->Message(csound, Str("activating instr %d at %"PRIi64"\n"),
-                      insno, csound->icurTime);
+      csound->Message(csound, Str("activating instr %d at %"PRIi64"\n"),
+                      insno, csound->icurTimeSamples);
   }
   csound->inerrcnt = 0;
-
 
   tp = csound->engineState.instrtxtp[insno];
   if (UNLIKELY(tp->muted == 0)) {
@@ -349,28 +1120,43 @@ int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp)
     }
   }
   if (UNLIKELY(tp->maxalloc > 0 && tp->active >= tp->maxalloc)) {
-    csoundWarning(csound, Str("cannot allocate last note because it exceeds "
-                              "instr maxalloc"));
-    return(0);
+    maxalloc_turnoff(csound, insno);
+    if (tp->active >= tp->maxalloc) {
+      release_cpu_power(csound, tp);
+      csoundWarning(csound, Str("cannot allocate last note because it exceeds "
+                                "instr maxalloc"));
+      return(0);
+    }
   }
-  /* If named ensure we have the fraction */
-  if (csound->engineState.instrtxtp[insno]->insname && newevtp->strarg)
-    newevtp->p[1] = named_instr_find(csound, newevtp->strarg);
-
-  /* if find this insno, active, with indef (tie) & matching p1 */
+  /* if find this insno, active, with indef (tie) & matching p1
+     and tie was not suppressed */
   for (ip = tp->instance; ip != NULL; ip = ip->nxtinstance) {
-    if (ip->actflg && ip->offtim < 0.0 && ip->p1.value == newevtp->p[1]) {
+    if (ip->actflg && ip->offtim < 0.0
+        && ip->p1.value == newevtp->p[1]) {
       csound->tieflag++;
       ip->tieflag = 1;
       tie = 1;
-      /* goto init; */ /*     continue that event */
       break;
+    }
+  }
+  if (tie) {
+    ATOMIC_SET(ip->init_done, 0);
+    if (UNLIKELY(instance_init_begin(csound, ip) != CSOUND_SUCCESS)) {
+      ip->tieflag = 0;
+      if (csound->tieflag > 0)
+        csound->tieflag--;
+      release_cpu_power(csound, tp);
+      return csound->InitError(csound,
+                               Str("cannot reinitialize instrument %d while "
+                                   "it is being turned off"), insno);
     }
   }
 
   if(!tie) {
     /* alloc new dspace if needed */
-    if (tp->act_instance == NULL || tp->isNew) {
+    ip = tp->isNew ? NULL : take_inactive_instance(csound, tp);
+    if (ip == NULL) {
+      csound->instance_count++;
       if (UNLIKELY(O->msglevel & CS_RNGEMSG)) {
         char *name = csound->engineState.instrtxtp[insno]->insname;
         if (UNLIKELY(name))
@@ -380,14 +1166,21 @@ int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp)
       }
       instance(csound, insno);
       tp->isNew=0;
+      ip = take_inactive_instance(csound, tp);
     }
-
-    /* pop from free instance chain */
-    csoundDebugMsg(csound, "insert(): tp->act_instance = %p\n", tp->act_instance);
-    ip = tp->act_instance;
+    if (UNLIKELY(ip == NULL)) {
+      release_cpu_power(csound, tp);
+      return csound->InitError(csound,
+                               Str("could not allocate instrument %d"), insno);
+    }
+    if(csoundGetDebug(csound) & DEBUG_RUNTIME)
+      csoundMessage(csound, "insert(): instance = %p\n", ip);
     ATOMIC_SET(ip->init_done, 0);
-    tp->act_instance = ip->nxtact;
     ip->insno = (int16) insno;
+    ip->esr = csound->esr;
+    ip->pidsr = csound->pidsr;
+    ip->sicvt = csound->sicvt;
+    ip->onedsr = csound->onedsr;
     ip->ksmps = csound->ksmps;
     ip->ekr = csound->ekr;
     ip->kcounter = csound->kcounter;
@@ -395,32 +1188,65 @@ int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp)
     ip->onedkr = csound->onedkr;
     ip->kicvt = csound->kicvt;
     ip->pds = NULL;
+    if (UNLIKELY(instance_init_begin(csound, ip) != CSOUND_SUCCESS)) {
+      release_cpu_power(csound, tp);
+      return csound->InitError(csound,
+                               Str("cannot initialize instrument %d while "
+                                   "it is being turned off"), insno);
+    }
     /* Add an active instrument */
     tp->active++;
     tp->instcnt++;
     csound->dag_changed++;      /* Need to remake DAG */
-    nxtp = &(csound->actanchor);    /* now splice into activ lst */
-    while ((prvp = nxtp) && (nxtp = prvp->nxtact) != NULL) {
-      if (nxtp->insno > insno ||
-          (nxtp->insno == insno && nxtp->p1.value > newevtp->p[1])) {
-        nxtp->prvact = ip;
-        break;
-      }
+    if(order == 1) { // MODE 1 = add to end
+      INSDS *prvp, *nxtp;
+      nxtp = &(csound->actanchor);
+      // splice at end of chain
+      while ((prvp = nxtp) &&
+             (nxtp = prvp->nxtact) != NULL)
+        ;
+      ip->nxtact = nxtp;
+      ip->prvact = prvp;
+      prvp->nxtact = ip;
     }
-    ip->nxtact = nxtp;
-    ip->prvact = prvp;
-    prvp->nxtact = ip;
+    if(order == 2) { // MODE 2 = add to start
+      INSDS *nxtp;
+      nxtp = &(csound->actanchor);
+      // splice at the top of chaing
+      ip->nxtact = nxtp->nxtact;
+      nxtp->nxtact->prvact = ip;
+      if (nxtp->nxtact) nxtp->nxtact->prvact = ip;
+      ip->prvact = nxtp;
+    }
+    else {  // default order
+      INSDS *prvp, *nxtp;
+      nxtp = &(csound->actanchor);
+      // standard splice: instrument number and p1 ascending order
+      while ((prvp = nxtp) && (nxtp = prvp->nxtact) != NULL) {
+        if (nxtp->insno > insno ||
+            (nxtp->insno == insno && nxtp->p1.value > newevtp->p[1])) {
+          nxtp->prvact = ip;
+          break;
+        }
+      }
+      ip->nxtact = nxtp;
+      ip->prvact = prvp;
+      prvp->nxtact = ip;
+    }
+
     ip->tieflag = 0;
     ip->actflg++;                   /*    and mark the instr active */
+    if(ip->instance_id == 0)
+      ip->instance_id = csound->instance_count;
   }
 
 
   /* init: */
   pfields = (CS_VAR_MEM*)&ip->p0;
   if (tp->psetdata) {
-    int i;
+    int32_t i;
     CS_VAR_MEM* pfields = (CS_VAR_MEM*) &ip->p0;
-    MYFLT *pdat = tp->psetdata + 2;
+    cs_float *pdat = tp->psetdata + 2;
     int32 nn = tp->pmax - 2;             /*   put cur vals in pflds */
 
     for (i = 0; i < nn; i++) {
@@ -442,33 +1268,33 @@ int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp)
   }
   if (newevtp->p3orig >= FL(0.0))
     ip->offbet = csound->beatOffs
-      + (double) newevtp->p2orig + (double) newevtp->p3orig;
+      + (cs_double) newevtp->p2orig + (cs_double) newevtp->p3orig;
   else
     ip->offbet = -1.0;
   flp = &ip->p1.value;
   fep = &newevtp->p[0];
 
-  if (UNLIKELY(O->odebug))
+  if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
     csound->Message(csound, "psave beg at %p\n", (void*) flp);
   if (n > newevtp->pcnt) n = newevtp->pcnt; /* IV - Oct 20 2002 */
   for (i = 1; i < n + 1; i++) {
     CS_VAR_MEM* pfield = pfields + i;
-    pfield->varType = (CS_TYPE*)&CS_VAR_TYPE_P;
+    pfield->varType = &CS_VAR_TYPE_P;
     pfield->value = fep[i];
   }
   if (n < tp->pmax && tp->psetdata==NULL) {
     for (i = 0; i < tp->pmax - n; i++) {
       CS_VAR_MEM* pfield = pfields + i + n + 1;
-      pfield->varType = (CS_TYPE*)&CS_VAR_TYPE_P;
+      pfield->varType = &CS_VAR_TYPE_P;
       pfield->value = 0;
     }
   }
-  if (UNLIKELY(O->odebug))
+  if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
     csound->Message(csound, "   ending at %p\n", (void*) flp);
 
   if (O->Beatmode)
-    ip->p2.value     = (MYFLT) (csound->icurTime/csound->esr - csound->timeOffs);
-  ip->offtim       = (double) ip->p3.value;         /* & duplicate p3 for now */
+    ip->p2.value     = (cs_float) (csound->icurTimeSamples/csound->esr - csound->timeOffs);
+  ip->offtim       = (cs_double) ip->p3.value;         /* & duplicate p3 for now */
   ip->m_chnbp      = (MCHNBLK*) NULL;
   ip->xtratim      = 0;
   ip->relesing     = 0;
@@ -477,34 +1303,19 @@ int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp)
   ip->opcod_iobufs = NULL;
   ip->strarg       = newevtp->strarg;  /* copy strarg so it does not get lost */
 
-  // current event needs to be reset here
-  csound->init_event = newevtp;
-  error = init_pass(csound, ip);
-  if(error == 0)
-    ATOMIC_SET(ip->init_done, 1);
-  if (UNLIKELY(csound->inerrcnt || ip->p3.value == FL(0.0))) {
-    xturnoff_now(csound, ip);
-    return csound->inerrcnt;
-  }
-
   /* new code for sample-accurate timing, not for tied notes */
+  /* VL 18 Dec 24 - needs to be set before init pass to propagate to UDOS */
   if (O->sampleAccurate && !tie) {
     int64_t start_time_samps, start_time_kcycles;
-    double duration_samps;
+    cs_double duration_samps;
     start_time_samps = (int64_t) (ip->p2.value * csound->esr);
     duration_samps =  ip->p3.value * csound->esr;
     start_time_kcycles = start_time_samps/csound->ksmps;
-    ip->ksmps_offset = start_time_samps - start_time_kcycles*csound->ksmps;
+    ip->ksmps_offset = (uint32_t) (start_time_samps - start_time_kcycles*csound->ksmps);
     /* with no p3 or xtratim values, can't set the sample accur duration */
     if (ip->p3.value > 0 && ip->xtratim == 0 ){
-      int tmp = ((int)duration_samps+ip->ksmps_offset)%csound->ksmps;
+      int32_t tmp = ((int)duration_samps+ip->ksmps_offset)%csound->ksmps;
       if (tmp != 0)ip->no_end = csound->ksmps - tmp; else ip->no_end = 0;
-      //ip->no_end = (csound->ksmps -
-      //              ((int)duration_samps+ip->ksmps_offset)%csound->ksmps)%csound->ksmps;
-    /* the ksmps_no_end field is initially 0, set to no_end in the last
-       perf cycle */
-    //  printf("*** duration_samps %d ip->ksmps_offset %d csound->ksmps %d ==> %d\n",
-    //         (int)duration_samps, ip->ksmps_offset, csound->ksmps, ip->no_end);
     }
     else ip->no_end = 0;
     ip->ksmps_no_end = 0;
@@ -516,14 +1327,36 @@ int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp)
     ip->no_end = 0;
   }
 
+  // current event needs to be reset here
+  csound->init_event = newevtp;
+  error = csound->oparms->realtime ? realtime_init_pass(csound, ip) :
+    init_pass(csound, ip);
+  initResult = instance_init_finish(csound, ip);
+  if (initResult == INSTANCE_INIT_COMPLETE && error == 0) {
+    ATOMIC_SET(ip->init_done, 1);
+  }
+  else {
+    ATOMIC_SET(ip->init_done, 0);
+  }
+  if (initResult == INSTANCE_INIT_TURNOFF) {
+    return error != 0 ? error : csound->inerrcnt;
+  }
+  if (UNLIKELY(csound->inerrcnt || ip->p3.value == FL(0.0))) {
+    if (csound->oparms->realtime)
+      instance_init_request_turnoff(csound, ip);
+    else
+      xturnoff_now(csound, ip);
+    return csound->inerrcnt;
+  }
+
 #ifdef BETA
-  if (UNLIKELY(O->odebug))
+  if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
     csound->Message(csound, "In insert:  %d %lf %lf\n",
                     __LINE__, ip->p3.value, ip->offtim); /* *********** */
 #endif
   if (ip->p3.value > FL(0.0) && ip->offtim > 0.0) { /* if still finite time, */
-    double p2 = (double) ip->p2.value + csound->timeOffs;
-    ip->offtim = p2 + (double) ip->p3.value;
+    cs_double p2 = (cs_double) ip->p2.value + csound->timeOffs;
+    ip->offtim = p2 + (cs_double) ip->p3.value;
     if (O->sampleAccurate && !tie  &&
         ip->p3.value > 0 &&
         ip->xtratim == 0) /* ceil for sample-accurate ending */
@@ -531,73 +1364,79 @@ int insert_event(CSOUND *csound, int insno, EVTBLK *newevtp)
     else /* normal : round */
       ip->offtim = FLOOR(ip->offtim * csound->ekr +0.5)/csound->ekr;
     if (O->Beatmode) {
-      p2 = ((p2*csound->esr - csound->icurTime) / csound->ibeatTime)
+      p2 = ((p2*csound->esr - csound->icurTimeSamples) / csound->ibeatTime)
         + csound->curBeat;
-      ip->offbet = p2 + ((double) ip->p3.value*csound->esr / csound->ibeatTime);
+      ip->offbet = p2 + ((cs_double) ip->p3.value*csound->esr / csound->ibeatTime);
     }
 #ifdef BETA
-    if (UNLIKELY(O->odebug))
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
       csound->Message(csound,
-                      "Calling schedofftim line %d; offtime= %lf (%lf)\n",
+                      "Calling sched_off_time line %d; offtime= %lf (%lf)\n",
                       __LINE__, ip->offtim, ip->offtim*csound->ekr);
 #endif
     if(csound->oparms->realtime) // compensate for possible late starts
       {
-        double p2 = (double) ip->p2.value + csound->timeOffs;
-        ip->offtim += (csound->icurTime/csound->esr - p2);
+        cs_double p2 = (cs_double) ip->p2.value + csound->timeOffs;
+        ip->offtim += (csound->icurTimeSamples/csound->esr - p2);
       }
-    //printf("%lf\n",   );
-    schedofftim(csound, ip);                  /*   put in turnoff list */
+    sched_off_time(csound, ip);                  /*   put in turnoff list */
   }
   else {
     ip->offbet = -1.0;
     ip->offtim = -1.0;                        /*   else mark indef     */
   }
-  if (UNLIKELY(O->odebug)) {
+
+  if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
     char *name = csound->engineState.instrtxtp[insno]->insname;
     if (UNLIKELY(name))
       csound->Message(csound, Str("instr %s now active:\n"), name);
     else
       csound->Message(csound, Str("instr %d now active:\n"), insno);
-    showallocs(csound);
+    show_allocs(csound);
   }
   if (newevtp->pinstance != NULL) {
-    *((MYFLT *)newevtp->pinstance) = (MYFLT) ((uintptr_t) ip);
+    /* place instance on output var memory */
+    memcpy(newevtp->pinstance, &ip, sizeof(INSDS *));
   }
   return 0;
 }
 
 
+int32_t insert(CSOUND *csound, int32_t insno,
+                     EVTBLK *newevtp) {
+  return insert_new(csound, insno, newevtp, 0);
+}
+
+
 /* insert a MIDI instr copy into active list */
 /*  then run an init pass                    */
-int MIDIinsert(CSOUND *csound, int insno, MCHNBLK *chn, MEVENT *mep) {
+int32_t insert_midi_event(CSOUND *csound, int32_t insno, MCHNBLK *chn,
+                          MEVENT *mep) {
 
   if(csound->oparms->realtime) {
-    unsigned long wp = csound->alloc_queue_wp;
-    csound->alloc_queue[wp].insno = insno;
-    csound->alloc_queue[wp].chn = chn;
-    csound->alloc_queue[wp].mep = *mep;
-    csound->alloc_queue[wp].type = 1;
-    csound->alloc_queue_wp = wp + 1 < MAX_ALLOC_QUEUE ? wp + 1 : 0;
-    ATOMIC_INCR(csound->alloc_queue_items);
-    return 0;
+    ALLOC_DATA data = { 0 };
+    data.insno = insno;
+    data.chn = chn;
+    data.mep = *mep;
+    data.type = ALLOC_DATA_MIDI_EVENT;
+    return alloc_queue_enqueue(csound, &data);
   }
   else return insert_midi(csound, insno, chn, mep);
 
 }
 
-int insert_midi(CSOUND *csound, int insno, MCHNBLK *chn, MEVENT *mep)
+int32_t insert_midi(CSOUND *csound, int32_t insno, MCHNBLK *chn, MEVENT *mep)
 {
   INSTRTXT  *tp;
   INSDS     *ip, **ipp, *prvp, *nxtp;
   OPARMS    *O = csound->oparms;
   CS_VAR_MEM *pfields;
-  EVTBLK  *evt;
-  int pmax = 0, error = 0;
+  int32_t pmax = 0, error = 0;
+  INSTANCE_INIT_RESULT initResult;
 
   if (UNLIKELY(csound->advanceCnt))
     return 0;
-  if (UNLIKELY(insno <= 0 || csound->engineState.instrtxtp[insno]->muted == 0))
+  if (UNLIKELY(insno < 0 || csound->engineState.instrtxtp[insno]->muted == 0))
     return 0;     /* muted */
 
   tp = csound->engineState.instrtxtp[insno];
@@ -612,14 +1451,19 @@ int insert_midi(CSOUND *csound, int insno, MCHNBLK *chn, MEVENT *mep)
     }
   }
   if (UNLIKELY(tp->maxalloc > 0 && tp->active >= tp->maxalloc)) {
-    csoundWarning(csound, Str("cannot allocate last note because it exceeds "
-                              "instr maxalloc"));
-    return(0);
+    maxalloc_turnoff(csound, insno);
+    if (tp->active >= tp->maxalloc) {
+      release_cpu_power(csound, tp);
+      csoundWarning(csound, Str("cannot allocate last note because it exceeds "
+                                "instr maxalloc"));
+      return(0);
+
+    }
   }
   tp->active++;
   tp->instcnt++;
   csound->dag_changed++;      /* Need to remake DAG */
-  if (UNLIKELY(O->odebug)) {
+  if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
     char *name = csound->engineState.instrtxtp[insno]->insname;
     if (UNLIKELY(name))
       csound->Message(csound, Str("MIDI activating instr %s\n"), name);
@@ -629,7 +1473,8 @@ int insert_midi(CSOUND *csound, int insno, MCHNBLK *chn, MEVENT *mep)
   csound->inerrcnt = 0;
   ipp = &chn->kinsptr[mep->dat1];       /* key insptr ptr           */
   /* alloc new dspace if needed */
-  if (tp->act_instance == NULL || tp->isNew) {
+  ip = tp->isNew ? NULL : take_inactive_instance(csound, tp);
+  if (ip == NULL) {
     if (UNLIKELY(O->msglevel & CS_RNGEMSG)) {
       char *name = csound->engineState.instrtxtp[insno]->insname;
       if (UNLIKELY(name))
@@ -639,19 +1484,34 @@ int insert_midi(CSOUND *csound, int insno, MCHNBLK *chn, MEVENT *mep)
     }
     instance(csound, insno);
     tp->isNew = 0;
+    ip = take_inactive_instance(csound, tp);
   }
-  /* pop from free instance chain */
-  ip = tp->act_instance;
+  if (UNLIKELY(ip == NULL)) {
+    tp->active--;
+    tp->instcnt--;
+    release_cpu_power(csound, tp);
+    return csound->InitError(csound,
+                             Str("could not allocate instrument %d"), insno);
+  }
   ATOMIC_SET(ip->init_done, 0);
-  tp->act_instance = ip->nxtact;
   ip->insno = (int16) insno;
+  /* A MIDI note-off can arrive as soon as the instance is published below. */
+  if (UNLIKELY(instance_init_begin(csound, ip) != CSOUND_SUCCESS)) {
+    tp->active--;
+    tp->instcnt--;
+    release_cpu_power(csound, tp);
+    return csound->InitError(csound,
+                             Str("cannot initialize instrument %d while "
+                                 "it is being turned off"), insno);
+  }
 
-  if (UNLIKELY(O->odebug))
+  if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
     csound->Message(csound, "Now %d active instr %d\n", tp->active, insno);
   if (UNLIKELY((prvp = *ipp) != NULL)) {          /*   if key currently activ */
+    if(O->msglevel & 0x400)
     csoundWarning(csound,
                   Str("MIDI note overlaps with key %d on same channel"),
-                  (int) mep->dat1);
+                  (int32_t) mep->dat1);
     while (prvp->nxtolap != NULL)       /*   append to overlap list */
       prvp = prvp->nxtolap;
     prvp->nxtolap = ip;
@@ -682,9 +1542,13 @@ int insert_midi(CSOUND *csound, int insno, MCHNBLK *chn, MEVENT *mep)
   ip->offbet       = -1.0;
   ip->offtim       = -1.0;              /* set indef duration */
   ip->opcod_iobufs = NULL;              /* IV - Sep 8 2002:            */
-  ip->p1.value     = (MYFLT) insno;     /* set these required p-fields */
-  ip->p2.value     = (MYFLT) (csound->icurTime/csound->esr - csound->timeOffs);
+  ip->p1.value     = (cs_float) insno;     /* set these required p-fields */
+  ip->p2.value     = (cs_float) (csound->icurTimeSamples/csound->esr - csound->timeOffs);
   ip->p3.value     = FL(-1.0);
+  ip->esr          = csound->esr;
+  ip->pidsr        = csound->pidsr;
+  ip->sicvt        = csound->sicvt;
+  ip->onedsr       = csound->onedsr;
   ip->ksmps        = csound->ksmps;
   ip->ekr          = csound->ekr;
   ip->kcounter     = csound->kcounter;
@@ -695,8 +1559,8 @@ int insert_midi(CSOUND *csound, int insno, MCHNBLK *chn, MEVENT *mep)
   pfields          = (CS_VAR_MEM*)&ip->p0;
 
   if (tp->psetdata != NULL) {
-    int i;
-    MYFLT *pdat = tp->psetdata + 2;
+    int32_t i;
+    cs_float *pdat = tp->psetdata + 2;
     int32 nn = tp->pmax - 2;             /*   put cur vals in pflds */
 
     for (i = 0; i < nn; i++) {
@@ -708,124 +1572,135 @@ int insert_midi(CSOUND *csound, int insno, MCHNBLK *chn, MEVENT *mep)
 
 
   /* MIDI channel message note on routing overrides pset: */
-
   if (O->midiKey) {
-    int pfield_index = O->midiKey;
+    int32_t pfield_index = O->midiKey;
     CS_VAR_MEM* pfield = (pfields + pfield_index);
-    MYFLT value = (MYFLT) ip->m_pitch;
+    cs_float value = (cs_float) ip->m_pitch;
     pfield->value = value;
 
     if (UNLIKELY(O->msglevel & CS_WARNMSG)) {
       csound->Message(csound, "  midiKey:         pfield: %3d  value: %3d\n",
-                      pfield_index, (int) pfield->value);
+                      pfield_index, (int32_t) pfield->value);
     }
     if (pmax < pfield_index) pmax = pfield_index;
   }
   else if (O->midiKeyCps) {
-    int pfield_index = O->midiKeyCps;
+    int32_t pfield_index = O->midiKeyCps;
     CS_VAR_MEM* pfield = (pfields + pfield_index);
-    MYFLT value = (MYFLT) ip->m_pitch;
+    cs_float value = (cs_float) ip->m_pitch;
     value = value / FL(12.0) + FL(3.0);
     value = value * OCTRES;
-    value = (MYFLT) CPSOCTL((int32) value);
+    value = (cs_float) CPSOCTL((int32) value);
     pfield->value = value;
 
-    if (UNLIKELY(O->msglevel & CS_WARNMSG)) {
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
       csound->Message(csound, "  midiKeyCps:      pfield: %3d  value: %3d\n",
-                      pfield_index, (int) pfield->value);
+                      pfield_index, (int32_t) pfield->value);
     }
     if (pmax < pfield_index) pmax = pfield_index;
   }
   else if (O->midiKeyOct) {
-    int pfield_index = O->midiKeyOct;
+    int32_t pfield_index = O->midiKeyOct;
     CS_VAR_MEM* pfield = (pfields + pfield_index);
-    MYFLT value = (MYFLT) ip->m_pitch;
+    cs_float value = (cs_float) ip->m_pitch;
     value = value / FL(12.0) + FL(3.0);
     pfield->value = value;
     if (UNLIKELY(O->msglevel & CS_WARNMSG)) {
       csound->Message(csound, "  midiKeyOct:      pfield: %3d  value: %3d\n",
-                      pfield_index, (int) pfield->value);
+                      pfield_index, (int32_t) pfield->value);
     }
     if (pmax < pfield_index) pmax = pfield_index;
   }
   else if (O->midiKeyPch) {
-    int pfield_index = O->midiKeyPch;
+    int32_t pfield_index = O->midiKeyPch;
     CS_VAR_MEM* pfield = (pfields + pfield_index);
-    MYFLT value = (MYFLT) ip->m_pitch;
-    double octave = 0;
-    double fraction = 0.0;
+    cs_float value = (cs_float) ip->m_pitch;
+    cs_double octave = 0;
+    cs_double fraction = 0.0;
     value = value / FL(12.0) + FL(3.0);
-    fraction = modf(value, &octave);
+    fraction = cs_modf(value, &octave);
     fraction *= 0.12;
     value = octave + fraction;
     pfield->value = value;
-    if (UNLIKELY(O->msglevel & CS_WARNMSG)) {
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
       csound->Message(csound, "  midiKeyPch:      pfield: %3d  value: %3d\n",
-                      pfield_index, (int) pfield->value);
+                      pfield_index, (int32_t) pfield->value);
     }
     if (pmax < pfield_index) pmax = pfield_index;
   }
   if (O->midiVelocity) {
-    int pfield_index = O->midiVelocity;
+    int32_t pfield_index = O->midiVelocity;
     CS_VAR_MEM* pfield = (pfields + pfield_index);
-    MYFLT value = (MYFLT) ip->m_veloc;
+    cs_float value = (cs_float) ip->m_veloc;
     pfield->value = value;
-    if (UNLIKELY(O->msglevel & CS_WARNMSG)) {
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
       csound->Message(csound, "  midiVelocity:    pfield: %3d  value: %3d\n",
-                      pfield_index, (int) pfield->value);
+                      pfield_index, (int32_t) pfield->value);
     }
     if (pmax < pfield_index) pmax = pfield_index;
   }
   else if (O->midiVelocityAmp) {
-    int pfield_index = O->midiVelocityAmp;
+    int32_t pfield_index = O->midiVelocityAmp;
     CS_VAR_MEM* pfield = (pfields + pfield_index);
-    MYFLT value = (MYFLT) ip->m_veloc;
+    cs_float value = (cs_float) ip->m_veloc;
     value = value * value / FL(16239.0);
     value = value * csound->e0dbfs;
     pfield->value = value;
-    if (UNLIKELY(O->msglevel & CS_WARNMSG)) {
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
       csound->Message(csound, "  midiVelocityAmp: pfield: %3d  value: %.3f\n",
                       pfield_index, pfield->value);
     }
     if (pmax < pfield_index) pmax = pfield_index;
   }
+
+  EVTBLK evt = {0};
   if (pmax > 0) {
-    int i;
-    if (csound->currevent == NULL) {
-      evt = (EVTBLK *) csound->Calloc(csound, sizeof(EVTBLK));
-      csound->currevent = evt;
-    }
-    else evt = csound->currevent;
-    evt->pcnt = pmax+1;
-    for (i =0; i < evt->pcnt; i++) {
-      evt->p[i] = pfields[i].value;
-    }
+    int32_t i;
+    csound->init_event = &evt;
+    csound->init_event->pcnt = pmax;
+    csound->init_event->p = (cs_float *) csound->Calloc(csound, sizeof(cs_float)*(pmax+1));
+    for (i =1; i < csound->init_event->pcnt+1; i++) {
+      csound->init_event->p[i] = pfields[i].value;
+   }
+  } else csound->init_event = NULL;
+
+  error = csound->oparms->realtime ? realtime_init_pass(csound, ip) :
+    init_pass(csound, ip);
+  if(evt.p) csound->Free(csound, evt.p);
+  csound->init_event = NULL;
+  initResult = instance_init_finish(csound, ip);
+  if (initResult == INSTANCE_INIT_COMPLETE && error == 0) {
+    ATOMIC_SET(ip->init_done, 1);
+  }
+  else {
+    ATOMIC_SET(ip->init_done, 0);
+  }
+  if (initResult == INSTANCE_INIT_TURNOFF) {
+    return error != 0 ? error : csound->inerrcnt;
   }
 
-  csound->init_event = csound->currevent;
-  error = init_pass(csound, ip);
-  if(error == 0)
-    ATOMIC_SET(ip->init_done, 1);
-
   if (UNLIKELY(csound->inerrcnt)) {
-    xturnoff_now(csound, ip);
+    if (csound->oparms->realtime)
+      instance_init_request_turnoff(csound, ip);
+    else
+      xturnoff_now(csound, ip);
     return csound->inerrcnt;
   }
   ip->tieflag = ip->reinitflag = 0;
   csound->tieflag = csound->reinitflag = 0;
 
-  if (UNLIKELY(O->odebug)) {
+  if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
     char *name = csound->engineState.instrtxtp[insno]->insname;
     if (UNLIKELY(name))
       csound->Message(csound, Str("instr %s now active:\n"), name);
     else
       csound->Message(csound, Str("instr %d now active:\n"), insno);
-    showallocs(csound);
+    show_allocs(csound);
   }
   return 0;
 }
 
-static void showallocs(CSOUND *csound)      /* debugging aid */
+static void show_allocs(CSOUND *csound)      /* debugging aid */
 {
   INSTRTXT *txtp;
   INSDS   *p;
@@ -843,7 +1718,7 @@ static void showallocs(CSOUND *csound)      /* debugging aid */
        */
       do {
         csound->Message(csound, "%d\t%p\t%p\t%p\t%p\t%p\t%p\t%d\t%3.1f\n",
-                        (int) p->insno, (void*) p,
+                        (int32_t) p->insno, (void*) p,
                         (void*) p->nxtinstance, (void*) p->prvinstance,
                         (void*) p->nxtact, (void*) p->prvact,
                         (void*) p->nxtoff, p->actflg, p->offtim);
@@ -851,7 +1726,7 @@ static void showallocs(CSOUND *csound)      /* debugging aid */
     }
 }
 
-static void schedofftim(CSOUND *csound, INSDS *ip)
+static void sched_off_time(CSOUND *csound, INSDS *ip)
 {                               /* put an active instr into offtime list  */
   INSDS *prvp, *nxtp;         /* called by insert() & midioff + xtratim */
 
@@ -860,27 +1735,27 @@ static void schedofftim(CSOUND *csound, INSDS *ip)
     csound->frstoff = ip;                     /*   firstoff chain */
     ip->nxtoff = nxtp;
     /* IV - Feb 24 2006: check if this note already needs to be turned off */
-    /* the following comparisons must match those in sensevents() */
+    /* the following comparisons must match those in sense_events() */
 #ifdef BETA
-    if (UNLIKELY(csound->oparms->odebug))
-      csound->Message(csound,"schedofftim: %lf %lf %f\n",
-                      ip->offtim, csound->icurTime/csound->esr,
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
+      csound->Message(csound,"sched_off_time: %lf %lf %f\n",
+                      ip->offtim, csound->icurTimeSamples/csound->esr,
                       csound->curTime_inc);
 
 #endif
     if (csound->oparms_.Beatmode) {
-      double  tval = csound->curBeat + (0.505 * csound->curBeat_inc);
-      if (ip->offbet <= tval) beatexpire(csound, tval);
+      cs_double  tval = csound->curBeat + (0.505 * csound->curBeat_inc);
+      if (ip->offbet <= tval) beat_expire(csound, tval);
     }
     else {
-      double  tval = (csound->icurTime + (0.505 * csound->ksmps))/csound->esr;
-      if (ip->offtim <= tval) timexpire(csound, tval);
+      cs_double  tval = (csound->icurTimeSamples + (0.505 * csound->ksmps))/csound->esr;
+      if (ip->offtim <= tval) time_expire(csound, tval);
     }
 #ifdef BETA
-    if (UNLIKELY(csound->oparms->odebug))
-      csound->Message(csound,"schedofftim: %lf %lf %lf\n", ip->offtim,
-                      (csound->icurTime + (0.505 * csound->ksmps))/csound->esr,
-                      csound->ekr*((csound->icurTime +
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
+      csound->Message(csound,"sched_off_time: %lf %lf %lf\n", ip->offtim,
+                      (csound->icurTimeSamples + (0.505 * csound->ksmps))/csound->esr,
+                      csound->ekr*((csound->icurTimeSamples +
                                     (0.505 * csound->ksmps))/csound->esr));
 #endif
   }
@@ -893,76 +1768,280 @@ static void schedofftim(CSOUND *csound, INSDS *ip)
   }
 }
 
-/* csound.c */
-extern  int     csoundDeinitialiseOpcodes(CSOUND *csound, INSDS *ip);
-int     useropcd(CSOUND *, UOPCODE*);
+void deinit_pass(CSOUND *csound, INSDS *ip) {
+  OPDS *dds = (OPDS *) ip;
+  const char* op;
+  while ((dds = dds->nxtd) != NULL) {
+    int32_t error;
 
-static void deact(CSOUND *csound, INSDS *ip)
-{                               /* unlink single instr from activ chain */
-  INSDS  *nxtp;               /*      and mark it inactive            */
-  /*   close any files in fd chain        */
-
-  if (ip->nxtd != NULL)
-    csoundDeinitialiseOpcodes(csound, ip);
-  /* remove an active instrument */
-  csound->engineState.instrtxtp[ip->insno]->active--;
-  if (ip->xtratim > 0)
-    csound->engineState.instrtxtp[ip->insno]->pending_release--;
-  csound->cpu_power_busy -= csound->engineState.instrtxtp[ip->insno]->cpuload;
-  /* IV - Sep 8 2002: free subinstr instances */
-  /* that would otherwise result in a memory leak */
-  if (ip->opcod_deact) {
-    UOPCODE *p = (UOPCODE*) ip->opcod_deact;          /* IV - Oct 26 2002 */
-    deact(csound, p->ip);     /* deactivate */
-    p->ip = NULL;
-    /* IV - Oct 26 2002: set perf routine to "not initialised" */
-    p->h.opadr = (SUBR) useropcd;
-    ip->opcod_deact = NULL;
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
+      op = dds->optext->t.oentry->opname;
+      csound->Message(csound, "deinit %s:\n", op);
+    }
+    error = (*dds->deinit)(csound, dds);
+    if(error) {
+      op = dds->optext->t.oentry->opname;
+      csound->ErrorMsg(csound, Str("%s deinit error\n"), op);
+    }
   }
-  if (ip->subins_deact) {
-    deact(csound, ((SUBINST*) ip->subins_deact)->ip); /* IV - Oct 24 2002 */
-    ((SUBINST*) ip->subins_deact)->ip = NULL;
-    ip->subins_deact = NULL;
-  }
-  if (UNLIKELY(csound->oparms->odebug)) {
-    char *name = csound->engineState.instrtxtp[ip->insno]->insname;
-    if (UNLIKELY(name))
-      csound->Message(csound, Str("removed instance of instr %s\n"), name);
-    else
-      csound->Message(csound, Str("removed instance of instr %d\n"), ip->insno);
-  }
-  /* IV - Oct 24 2002: ip->prvact may be NULL, so need to check */
-  if (ip->prvact && (nxtp = ip->prvact->nxtact = ip->nxtact) != NULL) {
-    nxtp->prvact = ip->prvact;
-  }
-  ip->actflg = 0;
-  /* link into free instance chain */
-  /* This also destroys ip->nxtact causing loops */
-  if (csound->engineState.instrtxtp[ip->insno] == ip->instr){
-    ip->nxtact = csound->engineState.instrtxtp[ip->insno]->act_instance;
-    csound->engineState.instrtxtp[ip->insno]->act_instance = ip;
-  }
-  if (ip->fdchp != NULL)
-    fdchclose(csound, ip);
-  csound->dag_changed++;
 }
 
+static int32_t instance_turnoff_claim(CSOUND *csound, INSDS *ip)
+{
+  int32_t claimed = 0;
+  int32_t state;
 
-int kill_instance(CSOUND *csound, KILLOP *p) {
-  if (LIKELY(*p->inst)) xturnoff(csound, (INSDS *) ((uintptr_t)*p->inst));
-  else csound->Warning(csound, Str("instance not valid\n"));
-  return OK;
+  async_instance_lock(csound);
+  state = ATOMIC_GET(ip->turnoff_pending);
+  if (ATOMIC_GET(ip->init_running) > 0) {
+    if (state == INSTANCE_TURNOFF_NONE)
+      ATOMIC_SET(ip->turnoff_pending, INSTANCE_TURNOFF_REQUESTED);
+  }
+  else if (state == INSTANCE_TURNOFF_NONE) {
+    /* FINALIZING quarantines the instance until this thread has completed
+       every active-chain and free-list update. */
+    ATOMIC_SET(ip->turnoff_pending, INSTANCE_TURNOFF_FINALIZING);
+    claimed = 1;
+  }
+  async_instance_unlock(csound);
+  return claimed;
+}
+
+static void instance_turnoff_complete(CSOUND *csound, INSDS *ip,
+                                      int32_t deactivated)
+{
+  async_instance_lock(csound);
+  if (ATOMIC_GET(ip->turnoff_pending) == INSTANCE_TURNOFF_FINALIZING) {
+    if (ATOMIC_GET(ip->free_pending) && !ip->linked) {
+      ATOMIC_SET(ip->turnoff_pending, deactivated ?
+                 INSTANCE_TURNOFF_RECLAIM : INSTANCE_TURNOFF_FINALIZING);
+      enqueue_init_turnoff_locked(csound, ip);
+    }
+    else
+      ATOMIC_SET(ip->turnoff_pending, INSTANCE_TURNOFF_NONE);
+  }
+  async_instance_unlock(csound);
+}
+
+#define DEACT_LOCAL_STACK_SIZE 64
+
+typedef enum {
+  DEACT_ENTER,
+  DEACT_AFTER_UDO,
+  DEACT_AFTER_SUBINSTR
+} DEACT_STAGE;
+
+typedef struct {
+  INSDS *ip;
+  DEACT_STAGE stage;
+  int32_t completeTurnoff;
+} DEACT_FRAME;
+
+static DEACT_FRAME *deact_grow_stack(CSOUND *csound, DEACT_FRAME *stack,
+                                     DEACT_FRAME *localStack,
+                                     size_t frameCount, size_t *capacity)
+{
+  DEACT_FRAME *grown;
+  size_t newCapacity;
+
+  if (UNLIKELY(*capacity > SIZE_MAX / 2 ||
+               *capacity * 2 > SIZE_MAX / sizeof(DEACT_FRAME))) {
+    csound->Die(csound, "%s", Str("deact: traversal depth overflow"));
+    return stack;
+  }
+
+  newCapacity = *capacity * 2;
+  if (stack == localStack) {
+    grown = (DEACT_FRAME *) csound->Malloc(
+      csound, newCapacity * sizeof(DEACT_FRAME));
+    if (LIKELY(grown != NULL))
+      memcpy(grown, localStack, frameCount * sizeof(DEACT_FRAME));
+  }
+  else {
+    grown = (DEACT_FRAME *) csound->ReAlloc(
+      csound, stack, newCapacity * sizeof(DEACT_FRAME));
+  }
+
+  if (UNLIKELY(grown == NULL)) {
+    csound->Die(csound, "%s", Str("deact: could not grow traversal stack"));
+    return stack;
+  }
+  *capacity = newCapacity;
+  return grown;
+}
+
+/* unlink single instr from activ chain */
+/*      and mark it inactive            */
+static void deact_internal(CSOUND *csound, INSDS *ip)
+{
+  DEACT_FRAME localStack[DEACT_LOCAL_STACK_SIZE];
+  DEACT_FRAME *stack = localStack;
+  size_t capacity = DEACT_LOCAL_STACK_SIZE;
+  size_t frameCount = 1;
+
+  localStack[0].ip = ip;
+  localStack[0].stage = DEACT_ENTER;
+  localStack[0].completeTurnoff = 0;
+
+  /* Store the recursive continuations explicitly while preserving their
+     original cleanup order. Ordinary chains remain in localStack. */
+  while (frameCount > 0) {
+    DEACT_FRAME *frame = &stack[frameCount - 1];
+    INSDS *current = frame->ip;
+
+    switch (frame->stage) {
+    case DEACT_ENTER: {
+      UOPCODE *udo;
+
+      deinit_pass(csound, current);
+      csound->engineState.instrtxtp[current->insno]->active--;
+      if (current->xtratim > 0)
+        csound->engineState.instrtxtp[current->insno]->pending_release--;
+      csound->cpu_power_busy -=
+        csound->engineState.instrtxtp[current->insno]->cpuload;
+
+      frame->stage = DEACT_AFTER_UDO;
+      if (current->opcod_deact == NULL)
+        continue;
+
+      udo = (UOPCODE *) current->opcod_deact;
+      free_user_opcode_converters(csound, udo);
+
+      if (udo->ip == NULL || ATOMIC_GET8(udo->ip->actflg) == 0 ||
+          !instance_turnoff_claim(csound, udo->ip))
+        continue;
+      if (UNLIKELY(frameCount == capacity))
+        stack = deact_grow_stack(csound, stack, localStack, frameCount,
+                                 &capacity);
+      stack[frameCount].ip = udo->ip;
+      stack[frameCount].stage = DEACT_ENTER;
+      stack[frameCount].completeTurnoff = 1;
+      frameCount++;
+      break;
+    }
+    case DEACT_AFTER_UDO: {
+      SUBINST *subinstr;
+
+      if (current->opcod_deact != NULL) {
+        UOPCODE *udo = (UOPCODE *) current->opcod_deact;
+        udo->ip = NULL;
+        udo->h.perf = (SUBR) useropcd;
+        current->opcod_deact = NULL;
+      }
+
+      frame->stage = DEACT_AFTER_SUBINSTR;
+      if (current->subins_deact == NULL)
+        continue;
+
+      subinstr = (SUBINST *) current->subins_deact;
+      if (subinstr->ip == NULL || ATOMIC_GET8(subinstr->ip->actflg) == 0 ||
+          !instance_turnoff_claim(csound, subinstr->ip))
+        continue;
+      if (UNLIKELY(frameCount == capacity))
+        stack = deact_grow_stack(csound, stack, localStack, frameCount,
+                                 &capacity);
+      stack[frameCount].ip = subinstr->ip;
+      stack[frameCount].stage = DEACT_ENTER;
+      stack[frameCount].completeTurnoff = 1;
+      frameCount++;
+      break;
+    }
+
+    case DEACT_AFTER_SUBINSTR: {
+      int32_t closeFiles = 0;
+      INSDS *nxtp;
+
+      reset_instance_variables(current);
+
+      if (current->subins_deact != NULL) {
+        SUBINST *subinstr = (SUBINST *) current->subins_deact;
+        subinstr->ip = NULL;
+        current->subins_deact = NULL;
+      }
+
+      if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
+        char *name =
+          csound->engineState.instrtxtp[current->insno]->insname;
+        if (UNLIKELY(name))
+          csound->Message(csound, Str("removed instance of instr %s\n"),
+                          name);
+        else
+          csound->Message(csound, Str("removed instance of instr %d\n"),
+                          current->insno);
+      }
+
+      if (ATOMIC_GET8(current->actflg) != 0) {
+        if (current->prvact &&
+            (nxtp = current->prvact->nxtact = current->nxtact) != NULL) {
+          nxtp->prvact = current->prvact;
+        }
+        current->prvact = NULL;
+        current->nxtact = NULL;
+        /* Prevent a loop in kperf() if an inactive instance is passed in. */
+        async_instance_lock(csound);
+        ATOMIC_SET(current->init_done, 0);
+        ATOMIC_SET8(current->actflg, 0);
+        closeFiles = current->fdchp != NULL &&
+          !instance_has_async_refs(current);
+        async_instance_unlock(csound);
+        /* Finish synchronous file cleanup before publishing this instance to
+           the free list. The realtime init thread may reuse it at once. */
+        if (closeFiles)
+          fdchclose(csound, current);
+        if (current->linked &&
+            csound->engineState.instrtxtp[current->insno] ==
+              current->instr) {
+          inactive_instance_lock(csound);
+          current->nxtact =
+            csound->engineState.instrtxtp[current->insno]->act_instance;
+          csound->engineState.instrtxtp[current->insno]->act_instance =
+            current;
+          inactive_instance_unlock(csound);
+        }
+      }
+
+      /* An already inactive, unlinked instance is not published above. */
+      if (!current->linked && current->fdchp != NULL &&
+          !instance_has_async_refs(current))
+        fdchclose(csound, current);
+      csound->dag_changed++;
+      if (frame->completeTurnoff)
+        instance_turnoff_complete(csound, current, 1);
+      frameCount--;
+      break;
+    }
+    }
+  }
+
+  if (stack != localStack)
+    csound->Free(csound, stack);
+}
+
+static void deact(CSOUND *csound, INSDS *ip)
+{
+  if (ATOMIC_GET8(ip->actflg) == 0)
+    return;
+  if (!instance_turnoff_claim(csound, ip))
+    return;
+  deact_internal(csound, ip);
+  instance_turnoff_complete(csound, ip, 1);
 }
 
 /* Turn off a particular insalloc, also remove from list of active */
 /* MIDI notes. Allows for releasing if ip->xtratim > 0. */
-
-void xturnoff(CSOUND *csound, INSDS *ip)  /* turnoff a particular insalloc  */
-{                                         /* called by inexclus on ctrl 111 */
+static void xturnoff_internal(CSOUND *csound, INSDS *ip, int32_t force)
+{
   MCHNBLK *chn;
 
-  if (UNLIKELY(ip->relesing))
+  if (!force && ATOMIC_GET8(ip->actflg) == 0)
+    return;
+  if (!force && !instance_turnoff_claim(csound, ip))
+    return;
+  if (UNLIKELY(ip->relesing)) {
+    if (!force)
+      instance_turnoff_complete(csound, ip, 0);
     return;                             /* already releasing: nothing to do */
+  }
 
   chn = ip->m_chnbp;
   if (chn != NULL) {                    /* if this was a MIDI note */
@@ -998,38 +2077,103 @@ void xturnoff(CSOUND *csound, INSDS *ip)  /* turnoff a particular insalloc  */
   /* if extra time needed: schedoff at new time */
   if (ip->xtratim > 0) {
     set_xtratim(csound, ip);
+    /* sched_off_time can expire this note synchronously. Release ownership so
+       the nested deactivation can claim and finish the turnoff. */
+    if (!force)
+      instance_turnoff_complete(csound, ip, 0);
 #ifdef BETA
-    if (UNLIKELY(csound->oparms->odebug))
-      csound->Message(csound, "Calling schedofftim line %d\n", __LINE__);
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
+      csound->Message(csound, "Calling sched_off_time line %d\n", __LINE__);
 #endif
-    schedofftim(csound, ip);
+    sched_off_time(csound, ip);
   }
   else {
     /* no extra time needed: deactivate immediately */
-    deact(csound, ip);
+    deact_internal(csound, ip);
     csound->dag_changed++;      /* Need to remake DAG */
+    if (!force)
+      instance_turnoff_complete(csound, ip, 1);
   }
+}
+
+void xturnoff(CSOUND *csound, INSDS *ip)  /* turnoff a particular insalloc  */
+{                                         /* called by inexclus on ctrl 111 */
+  xturnoff_internal(csound, ip, 0);
 }
 
 /* Turn off instrument instance immediately, without releasing. */
 /* Removes alloc from list of active MIDI notes. */
-void xturnoff_now(CSOUND *csound, INSDS *ip)
+static void xturnoff_now_internal(CSOUND *csound, INSDS *ip, int32_t force)
 {
+  if (!force && ATOMIC_GET8(ip->actflg) == 0)
+    return;
+  if (!force && !instance_turnoff_claim(csound, ip))
+    return;
+  if (ip->xtratim > 0 && ip->relesing)
+    csound->engineState.instrtxtp[ip->insno]->pending_release--;
   ip->xtratim = 0;
   ip->relesing = 0;
-  xturnoff(csound, ip);
+  xturnoff_internal(csound, ip, 1);
+  if (!force)
+    instance_turnoff_complete(csound, ip, 1);
 }
 
-extern void free_instrtxt(CSOUND *csound, INSTRTXT *instrtxt);
+void xturnoff_now(CSOUND *csound, INSDS *ip)
+{
+  xturnoff_now_internal(csound, ip, 0);
+}
 
+void xturnoff_instance(CSOUND *csound, cs_float instr, int32_t insno, INSDS *ip,
+                  int32_t mode, int32_t allow_release) {
+  INSDS *ip2 = NULL, *nip;
+  do {
+    /* This loop does not terminate in mode=0 */
+    nip = ip->nxtact;
+    if (((mode & 8) && ip->offtim >= 0.0) ||
+        ((mode & 4) && ip->p1.value != instr) ||
+        (allow_release && ip->relesing)) {
+      ip = nip;
+      continue;
+    }
+    if (!(mode & 3)) {
+      if (allow_release) {
+        xturnoff(csound, ip);
+      }
+      else {
+        nip = ip->nxtact;
+        xturnoff_now(csound, ip);
+      }
+    }
+    else {
+      ip2 = ip;
+      if ((mode & 3) == 1)
+        break;
+    }
+    ip = nip;
+  } while (ip != NULL && (int32_t) ip->insno == insno);
+
+  if (ip2 != NULL) {
+    if (allow_release) {
+      xturnoff(csound, ip2);
+    }
+    else {
+      xturnoff_now(csound, ip2);
+    }
+  }
+}
 
 void free_instr_var_memory(CSOUND* csound, INSDS* ip) {
   INSTRTXT* instrDef = ip->instr;
   CS_VAR_POOL* pool = instrDef->varPool;
   CS_VARIABLE* current = pool->head;
 
+  if (ip->lclbas == NULL) {
+    // This seems to be the case when freeing instr 0...
+    return;
+  }
+
   while (current != NULL) {
-    CS_TYPE* varType = current->varType;
+    const CS_TYPE* varType = current->varType;
     if (varType->freeVariableMemory != NULL) {
       varType->freeVariableMemory(csound,
                                   ip->lclbas + current->memBlockIndex);
@@ -1038,33 +2182,47 @@ void free_instr_var_memory(CSOUND* csound, INSDS* ip) {
   }
 }
 
-void orcompact(CSOUND *csound)          /* free all inactive instr spaces */
+/* free all inactive instr spaces */
+void free_inactive_instances(CSOUND *csound)
 {
   INSTRTXT  *txtp;
-  INSDS     *ip, *nxtip, *prvip, **prvnxtloc;
-  int       cnt = 0;
+  INSDS     *ip, *nxtip, *prvip, **prvnxtloc, *pending;
+  INSDS     *reclaim = NULL, *reclaim_tail = NULL;
+  int32_t       cnt = 0;
+
+  /* Detach reclaimable instances while holding the instance-list lock, then
+     release files and memory after that lock is released. A caller may still
+     serialize the surrounding section transition with alloc_spinlock. */
+  inactive_instance_lock(csound);
   for (txtp = &(csound->engineState.instxtanchor);
        txtp != NULL;  txtp = txtp->nxtinstxt) {
+    pending = NULL;
     if ((ip = txtp->instance) != NULL) {        /* if instance exists */
 
       prvip = NULL;
       prvnxtloc = &txtp->instance;
       do {
-        if (!ip->actflg) {
+        if (instance_is_reclaimable(ip)) {
           cnt++;
-          if (ip->opcod_iobufs && ip->insno > csound->engineState.maxinsno)
-            csound->Free(csound, ip->opcod_iobufs);   /* IV - Nov 10 2002 */
-          if (ip->fdchp != NULL)
-            fdchclose(csound, ip);
-          if (ip->auxchp != NULL)
-            auxchfree(csound, ip);
-          free_instr_var_memory(csound, ip);
           if ((nxtip = ip->nxtinstance) != NULL)
             nxtip->prvinstance = prvip;
           *prvnxtloc = nxtip;
-          csound->Free(csound, (char *)ip);
+          /* Preserve the original INSTRTXT traversal order. An owning
+             instrument's AUXCH chain can contain descriptors embedded in a
+             nested UDO instance, so reversing this list would free the
+             descriptor storage before auxchfree() follows the chain. */
+          ip->nxtinstance = NULL;
+          if (reclaim_tail != NULL)
+            reclaim_tail->nxtinstance = ip;
+          else
+            reclaim = ip;
+          reclaim_tail = ip;
         }
         else {
+          if (!ip->actflg && ip->linked) {
+            ip->nxtact = pending;
+            pending = ip;
+          }
           prvip = ip;
           prvnxtloc = &ip->nxtinstance;
         }
@@ -1081,16 +2239,31 @@ void orcompact(CSOUND *csound)          /* free all inactive instr spaces */
       txtp->lst_instance = ip;
     }
 
-    txtp->act_instance = NULL;                /* no free instances */
+    txtp->act_instance = pending;
+  }
+  inactive_instance_unlock(csound);
+
+  while (reclaim != NULL) {
+    ip = reclaim;
+    reclaim = reclaim->nxtinstance;
+    if (ip->opcod_iobufs && ip->insno > csound->engineState.maxinsno)
+      csound->Free(csound, ip->opcod_iobufs);
+    if (ip->fdchp != NULL)
+      fdchclose(csound, ip);
+    if (ip->auxchp != NULL)
+      auxchfree(csound, ip);
+    free_instr_var_memory(csound, ip);
+    free_instance_variables(csound, ip);
+    csound->Free(csound, (char *) ip);
   }
   /* check current items in deadpool to see if they need deleting */
   {
-    int i;
+    int32_t i;
     for (i=0; i < csound->dead_instr_no; i++) {
       if (csound->dead_instr_pool[i] != NULL) {
         INSDS *active = csound->dead_instr_pool[i]->instance;
         while (active != NULL) {
-          if (active->actflg) {
+          if (!instance_is_reclaimable(active)) {
             // add_to_deadpool(csound,csound->dead_instr_pool[i]);
             break;
           }
@@ -1105,41 +2278,12 @@ void orcompact(CSOUND *csound)          /* free all inactive instr spaces */
     }
   }
   if (UNLIKELY(cnt)) {
-    if(csound->oparms->msglevel ||csound->oparms->odebug)
-     csound->Message(csound, Str("inactive allocs returned to freespace\n"));
+    if(csound->oparms->msglevel ||csoundGetDebug(csound) & DEBUG_RUNTIME)
+      csound->Message(csound, Str("inactive allocs returned to freespace\n"));
   }
 }
 
-void infoff(CSOUND *csound, MYFLT p1)   /* turn off an indef copy of instr p1 */
-{                                       /*      called by musmon              */
-  INSDS *ip;
-  int   insno;
-
-  insno = (int) p1;
-  if (LIKELY((ip = (csound->engineState.instrtxtp[insno])->instance) != NULL)) {
-    do {
-      if (ip->insno == insno          /* if find the insno */
-          && ip->actflg               /*      active       */
-          && ip->offtim < 0.0         /*  but indef, VL: currently this condition
-                                          cannot be removed, as it breaks turning
-                                          off extratime instances */
-          && ip->p1.value == p1) {
-        if (UNLIKELY(csound->oparms->odebug))
-          csound->Message(csound, "turning off inf copy of instr %d\n",
-                          insno);
-        xturnoff(csound, ip);
-        return;                       /*      turn it off  */
-      }
-    } while ((ip = ip->nxtinstance) != NULL);
-  }
-  csound->Message(csound,
-                  Str("could not find playing instr %f\n"),
-                  p1);
-}
-
-void do_baktrace(CSOUND *, uint64_t);
-
-int csoundInitError(CSOUND *csound, const char *s, ...)
+int32_t csoundInitError(CSOUND *csound, const char *s, ...)
 {
   va_list args;
   INSDS   *ip;
@@ -1163,25 +2307,25 @@ int csoundInitError(CSOUND *csound, const char *s, ...)
       ip = ((OPCOD_IOBUFS*) ip->opcod_iobufs)->parent_ip;
     } while (ip->opcod_iobufs);
     if (op)
-      snprintf(buf, 512, Str("INIT ERROR in instr %d (opcode %s) line %d: "),
+      snprintf(buf, 512, Str("\nINIT ERROR in instr %d (opcode %s) line %d: "),
                ip->insno, op->name, csound->ids->optext->t.linenum);
     else
-      snprintf(buf, 512, Str("INIT ERROR in instr %d (subinstr %d) line %d: "),
+      snprintf(buf, 512, Str("\nINIT ERROR in instr %d (subinstr %d) line %d: "),
                ip->insno, csound->ids->insdshead->insno,
                csound->ids->optext->t.linenum);
   }
   else
-    snprintf(buf, 512, Str("INIT ERROR in instr %d (opcode %s) line %d: "),
+    snprintf(buf, 512, Str("\nINIT ERROR in instr %d (opcode %s) line %d: "),
              ip->insno, csound->op, csound->ids->optext->t.linenum);
   va_start(args, s);
   csoundErrMsgV(csound, buf, s, args);
   va_end(args);
   do_baktrace(csound, csound->ids->optext->t.locn);
-  putop(csound, &(csound->ids->optext->t));
+  print_opcall(csound, &(csound->ids->optext->t));
   return ++(csound->inerrcnt);
 }
 
-int csoundPerfError(CSOUND *csound, OPDS *h, const char *s, ...)
+int32_t csoundPerfError(CSOUND *csound, OPDS *h, const char *s, ...)
 {
   va_list args;
   char    buf[512];
@@ -1191,558 +2335,41 @@ int csoundPerfError(CSOUND *csound, OPDS *h, const char *s, ...)
     csoundErrorMsg(csound, Str("PerfError in wrong mode %d\n"), csound->mode);
   if (ip->opcod_iobufs) {
     OPCODINFO *op = ((OPCOD_IOBUFS*) ip->opcod_iobufs)->opcode_info;
+
     /* find top level instrument instance */
     do {
       ip = ((OPCOD_IOBUFS*) ip->opcod_iobufs)->parent_ip;
     } while (ip->opcod_iobufs);
-    if (op)
+    if (op) {
       snprintf(buf, 512, Str("PERF ERROR in instr %d (opcode %s) line %d: "),
                ip->insno, op->name, t.linenum);
+    }
     else
       snprintf(buf, 512, Str("PERF ERROR in instr %d (subinstr %d) line %d: "),
                ip->insno, ip->insno, t.linenum);
   }
-  else
+  else{
+    char *name = strip_extension(csound, csound->op);
     snprintf(buf, 512, Str("PERF ERROR in instr %d (opcode %s) line %d: "),
-             ip->insno, csound->op, t.linenum);
+             ip->insno, name, t.linenum);
+   csound->Free(csound, name);
+  }
   va_start(args, s);
   csoundErrMsgV(csound, buf, s, args);
   va_end(args);
-  do_baktrace(csound, t.locn);
-  if (ip->pds)
-    putop(csound, &(ip->pds->optext->t));
-  csoundErrorMsg(csound, "%s",  Str("   note aborted\n"));
+  if (ip->pds) {
+    print_opcall(csound, &(ip->pds->optext->t));
+  }
+  csoundErrorMsg(csound, "%s",  Str("...event aborted\n"));
   csound->perferrcnt++;
   xturnoff_now((CSOUND*) csound, ip);       /* rm ins fr actlist */
   return csound->perferrcnt;                /* contin from there */
 }
 
-int subinstrset_(CSOUND *csound, SUBINST *p, int instno)
-{
-  OPDS    *saved_ids = csound->ids;
-  INSDS   *saved_curip = csound->curip;
-  CS_VAR_MEM   *pfield;
-  int     n, init_op, inarg_ofs;
-  INSDS  *pip = p->h.insdshead;
-
-  init_op = (p->h.opadr == NULL ? 1 : 0);
-  inarg_ofs = (init_op ? 0 : SUBINSTNUMOUTS);
-  if (UNLIKELY(instno < 0)) return NOTOK;
-  /* IV - Oct 9 2002: need this check */
-  if (UNLIKELY(!init_op && p->OUTOCOUNT > csound->nchnls)) {
-    return csoundInitError(csound, Str("subinstr: number of output "
-                                       "args greater than nchnls"));
-  }
-  /* IV - Oct 9 2002: copied this code from useropcdset() to fix some bugs */
-  if (!(pip->reinitflag | pip->tieflag) || p->ip == NULL) {
-    /* get instance */
-    if (csound->engineState.instrtxtp[instno]->act_instance == NULL)
-      instance(csound, instno);
-    p->ip = csound->engineState.instrtxtp[instno]->act_instance;
-    csound->engineState.instrtxtp[instno]->act_instance = p->ip->nxtact;
-    p->ip->insno = (int16) instno;
-    p->ip->actflg++;                  /*    and mark the instr active */
-    csound->engineState.instrtxtp[instno]->active++;
-    csound->engineState.instrtxtp[instno]->instcnt++;
-    p->ip->p1.value = (MYFLT) instno;
-    /* VL 21-10-16: iobufs are not used here and
-       are causing trouble elsewhere. Commenting
-       it out */
-    /* p->ip->opcod_iobufs = (void*) &p->buf; */
-    /* link into deact chain */
-    p->ip->subins_deact = saved_curip->subins_deact;
-    p->ip->opcod_deact = NULL;
-    saved_curip->subins_deact = (void*) p;
-    p->parent_ip = p->buf.parent_ip = saved_curip;
-  }
-
-  p->ip->ksmps = CS_KSMPS;
-  p->ip->kcounter = CS_KCNT;
-  p->ip->ekr = CS_EKR;
-  p->ip->onedkr = CS_ONEDKR;
-  p->ip->onedksmps = CS_ONEDKSMPS;
-  p->ip->kicvt = CS_KICVT;
-
-  /* copy parameters from this instrument into our subinstrument */
-  p->ip->xtratim  = saved_curip->xtratim;
-  p->ip->m_sust   = 0;
-  p->ip->relesing = saved_curip->relesing;
-  p->ip->offbet   = saved_curip->offbet;
-  p->ip->offtim   = saved_curip->offtim;
-  p->ip->nxtolap  = NULL;
-  p->ip->p2       = saved_curip->p2;
-  p->ip->p3       = saved_curip->p3;
-  p->ip->ksmps = CS_KSMPS;
-
-  /* IV - Oct 31 2002 */
-  p->ip->m_chnbp  = saved_curip->m_chnbp;
-  p->ip->m_pitch  = saved_curip->m_pitch;
-  p->ip->m_veloc  = saved_curip->m_veloc;
-
-  p->ip->ksmps_offset =  saved_curip->ksmps_offset;
-  p->ip->ksmps_no_end =  saved_curip->ksmps_no_end;
-  p->ip->tieflag = saved_curip->tieflag;
-  p->ip->reinitflag = saved_curip->reinitflag;
-
-  /* copy remainder of pfields */
-  pfield = (CS_VAR_MEM*)&p->ip->p3;
-  /* by default all inputs are i-rate mapped to p-fields */
-  if (UNLIKELY(p->INOCOUNT >
-               (unsigned int)(csound->engineState.instrtxtp[instno]->pmax + 1)))
-    return csoundInitError(csound, Str("subinstr: too many p-fields"));
-  union {
-    MYFLT d;
-    int32 i;
-  } ch;
-  int str_cnt = 0, len = 0;
-  char *argstr;
-  for (n = 1; (unsigned int) n < p->INOCOUNT; n++){
-    if (IS_STR_ARG(p->ar[inarg_ofs + n])) {
-      ch.d = SSTRCOD;
-      ch.i = str_cnt & 0xffff;
-      (pfield + n)->value = ch.d;
-      argstr = ((STRINGDAT *)p->ar[inarg_ofs + n])->data;
-      if (str_cnt == 0)
-        p->ip->strarg = csound->Calloc(csound, strlen(argstr)+1);
-      else
-        p->ip->strarg = csound->ReAlloc(csound, p->ip->strarg,
-                                        len+strlen(argstr)+1);
-      strcpy(p->ip->strarg + len, argstr);
-      len += strlen(argstr)+1;
-      str_cnt++;
-    }
-    else (pfield + n)->value = *p->ar[inarg_ofs + n];
-  }
-  /* allocate memory for a temporary store of spout buffers */
-  if (!init_op && !(pip->reinitflag | pip->tieflag))
-    csoundAuxAlloc(csound,
-                   (int32) csound->nspout * sizeof(MYFLT), &p->saved_spout);
-
-  /* do init pass for this instr */
-  csound->curip = p->ip;        /* **** NEW *** */
-  p->ip->init_done = 0;
-  csound->ids = (OPDS *)p->ip;
-  csound->mode = 1;
-  while ((csound->ids = csound->ids->nxti) != NULL) {
-    csound->op = csound->ids->optext->t.oentry->opname;
-    (*csound->ids->iopadr)(csound, csound->ids);
-  }
-  csound->mode = 0;
-  p->ip->init_done = 1;
-  /* copy length related parameters back to caller instr */
-  saved_curip->xtratim = csound->curip->xtratim;
-  saved_curip->relesing = csound->curip->relesing;
-  saved_curip->offbet = csound->curip->offbet;
-  saved_curip->offtim = csound->curip->offtim;
-  saved_curip->p3 = csound->curip->p3;
-
-  /* restore globals */
-  csound->ids = saved_ids;
-  csound->curip = saved_curip;
-  return OK;
-}
-
-int subinstrset_S(CSOUND *csound, SUBINST *p){
-  int instno, init_op, inarg_ofs;
-  /* check if we are using subinstrinit or subinstr */
-  init_op = (p->h.opadr == NULL ? 1 : 0);
-  inarg_ofs = (init_op ? 0 : SUBINSTNUMOUTS);
-  instno = strarg2insno(csound, ((STRINGDAT *)p->ar[inarg_ofs])->data, 1);
-  if (UNLIKELY(instno==NOT_AN_INSTRUMENT)) instno = -1;
-  return subinstrset_(csound,p,instno);
-}
-
-
-int subinstrset(CSOUND *csound, SUBINST *p){
-  int instno, init_op, inarg_ofs;
-  /* check if we are using subinstrinit or subinstr */
-  init_op = (p->h.opadr == NULL ? 1 : 0);
-  inarg_ofs = (init_op ? 0 : SUBINSTNUMOUTS);
-  instno = (int) *(p->ar[inarg_ofs]);
-  return subinstrset_(csound,p,instno);
-}
-
-/* IV - Sep 8 2002: new functions for user defined opcodes (based */
-/* on Matt J. Ingalls' subinstruments, but mostly rewritten) */
-
-/*
-  UDOs now use the local ksmps stored in lcurip->ksmps
-  all the other dependent parameters are calculated in relation to
-  this.
-
-  lcurip->ksmps is set to the caller ksmps (CS_KSMPS), unless a new
-  local ksmps is used, in which case it is set to that value.
-  If local ksmps differs from CS_KSMPS, we set useropcd1() to
-  deal with the perf-time code. Otherwise useropcd2() is used.
-
-  For recursive calls when the local ksmps is set to differ from
-  the calling instrument ksmps, the top-level call
-  will use useropcd1(), whereas all the other recursive calls
-  will use useropdc2(), since their local ksmps will be the same
-  as the caller.
-
-  Also in case of a local ksmps that differs from the caller,
-  the local kcounter value, obtained from the caller is
-  scaled to denote the correct kcount in terms of local
-  kcycles.
-
-*/
-int useropcd1(CSOUND *, UOPCODE*), useropcd2(CSOUND *, UOPCODE*);
-
-int useropcdset(CSOUND *csound, UOPCODE *p)
-{
-    OPDS         *saved_ids = csound->ids;
-    INSDS        *parent_ip = csound->curip, *lcurip;
-    INSTRTXT     *tp;
-    unsigned int instno;
-    unsigned int pcnt;
-    unsigned int i, n;
-    OPCODINFO    *inm;
-    OPCOD_IOBUFS *buf = NULL;
-    MYFLT ksmps_scale;
-    unsigned int local_ksmps;
-    /* default ksmps */
-    local_ksmps = CS_KSMPS;
-    ksmps_scale = 1;
-    /* look up the 'fake' instr number, and opcode name */
-    inm = (OPCODINFO*) p->h.optext->t.oentry->useropinfo;
-    instno = inm->instno;
-    tp = csound->engineState.instrtxtp[instno];
-    if (tp == NULL)
-      return csound->InitError(csound, Str("Cannot find instr %d (UDO %s)\n"),
-                               instno, inm->name);
-    /* set local ksmps if defined by user */
-    n = p->OUTOCOUNT + p->INCOUNT - 1;
-
-    if (*(p->ar[n]) != FL(0.0)) {
-      i = (unsigned int) *(p->ar[n]);
-      if (UNLIKELY(i < 1 || i > csound->ksmps ||
-                   ((CS_KSMPS / i) * i) != CS_KSMPS)) {
-        return csoundInitError(csound, Str("%s: invalid local ksmps value: %d"),
-                               inm->name, i);
-      }
-      local_ksmps = i;
-    }
-
-    if (!p->ip) {
-
-      /* search for already allocated, but not active instance */
-      /* if none was found, allocate a new instance */
-      tp = csound->engineState.instrtxtp[instno];
-      if (tp == NULL) {
-        return csound->InitError(csound, Str("Cannot find instr %d (UDO %s)\n"),
-                                 instno, inm->name);
-      }
-      if (!tp->act_instance)
-        instance(csound, instno);
-      lcurip = tp->act_instance;            /* use free instance, and */
-      tp->act_instance = lcurip->nxtact;    /* remove from chain      */
-      if (lcurip->opcod_iobufs==NULL)
-        return csound->InitError(csound, "Broken redefinition of UDO %d (UDO %s)\n",
-                                 instno, inm->name);
-      lcurip->actflg++;                     /*    and mark the instr active */
-      tp->active++;
-      tp->instcnt++;
-      /* link into deact chain */
-      lcurip->opcod_deact = parent_ip->opcod_deact;
-      lcurip->subins_deact = NULL;
-      parent_ip->opcod_deact = (void*) p;
-      p->ip = lcurip;
-      /* IV - Nov 10 2002: set up pointers to I/O buffers */
-      buf = p->buf = (OPCOD_IOBUFS*) lcurip->opcod_iobufs;
-      buf->opcode_info = inm;
-      /* initialise perf time address lists */
-      /* **** Could be a memset **** */
-      buf->iobufp_ptrs[0] = buf->iobufp_ptrs[1] = NULL;
-      buf->iobufp_ptrs[2] = buf->iobufp_ptrs[3] = NULL;
-      buf->iobufp_ptrs[4] = buf->iobufp_ptrs[5] = NULL;
-      buf->iobufp_ptrs[6] = buf->iobufp_ptrs[7] = NULL;
-      buf->iobufp_ptrs[8] = buf->iobufp_ptrs[9] = NULL;
-      buf->iobufp_ptrs[10] = buf->iobufp_ptrs[11] = NULL;
-      /* store parameters of input and output channels, and parent ip */
-      buf->uopcode_struct = (void*) p;
-      buf->parent_ip = p->parent_ip = parent_ip;
-    }
-
-    /* copy parameters from the caller instrument into our subinstrument */
-    lcurip = p->ip;
-
-    /* set the local ksmps values */
-    if (local_ksmps != CS_KSMPS) {
-      /* this is the case when p->ip->ksmps != p->h.insdshead->ksmps */
-      lcurip->ksmps = local_ksmps;
-      ksmps_scale = CS_KSMPS / local_ksmps;
-      lcurip->onedksmps =  FL(1.0) / (MYFLT) local_ksmps;
-      lcurip->ekr = csound->esr / (MYFLT) local_ksmps;
-      lcurip->onedkr = FL(1.0) / lcurip->ekr;
-      lcurip->kicvt = (MYFLT) FMAXLEN /lcurip->ekr;
-      lcurip->kcounter = (CS_KCNT)*ksmps_scale;
-    } else {
-      lcurip->ksmps = CS_KSMPS;
-      lcurip->kcounter = CS_KCNT;
-      lcurip->ekr = CS_EKR;
-      lcurip->onedkr = CS_ONEDKR;
-      lcurip->onedksmps = CS_ONEDKSMPS;
-      lcurip->kicvt = CS_KICVT;
-    }
-
-    /* VL 13-12-13 */
-    /* this sets ksmps and kr local variables */
-    /* create local ksmps variable and init with ksmps */
-    if (lcurip->lclbas != NULL) {
-      CS_VARIABLE *var =
-        csoundFindVariableWithName(csound, lcurip->instr->varPool, "ksmps");
-      *((MYFLT *)(var->memBlockIndex + lcurip->lclbas)) = lcurip->ksmps;
-      /* same for kr */
-      var =
-        csoundFindVariableWithName(csound, lcurip->instr->varPool, "kr");
-      *((MYFLT *)(var->memBlockIndex + lcurip->lclbas)) = lcurip->ekr;
-    }
-
-    lcurip->m_chnbp = parent_ip->m_chnbp;       /* MIDI parameters */
-    lcurip->m_pitch = parent_ip->m_pitch;
-    lcurip->m_veloc = parent_ip->m_veloc;
-    lcurip->xtratim = parent_ip->xtratim * ksmps_scale;
-    lcurip->m_sust = 0;
-    lcurip->relesing = parent_ip->relesing;
-    lcurip->offbet = parent_ip->offbet;
-    lcurip->offtim = parent_ip->offtim;
-    lcurip->nxtolap = NULL;
-    lcurip->ksmps_offset = parent_ip->ksmps_offset;
-    lcurip->ksmps_no_end = parent_ip->ksmps_no_end;
-    lcurip->tieflag = parent_ip->tieflag;
-    lcurip->reinitflag = parent_ip->reinitflag;
-    /* copy all p-fields, including p1 (will this work ?) */
-    if (tp->pmax > 3) {         /* requested number of p-fields */
-      n = tp->pmax; pcnt = 0;
-      while (pcnt < n) {
-        if ((i = csound->engineState.instrtxtp[parent_ip->insno]->pmax) > pcnt) {
-          if (i > n) i = n;
-          /* copy next block of p-fields */
-          memcpy(&(lcurip->p1) + pcnt, &(parent_ip->p1) + pcnt,
-                 (size_t) ((i - pcnt) * sizeof(CS_VAR_MEM)));
-          pcnt = i;
-        }
-        /* top level instr reached */
-        if (parent_ip->opcod_iobufs == NULL) break;
-        parent_ip = ((OPCOD_IOBUFS*) parent_ip->opcod_iobufs)->parent_ip;
-      }
-    }
-    else
-      memcpy(&(lcurip->p1), &(parent_ip->p1), 3 * sizeof(CS_VAR_MEM));
-
-
-    /* do init pass for this instr */
-    csound->curip = lcurip;
-    csound->ids = (OPDS *) (lcurip->nxti);
-    ATOMIC_SET(p->ip->init_done, 0);
-    csound->mode = 1;
-    while (csound->ids != NULL) {
-      csound->op = csound->ids->optext->t.oentry->opname;
-      (*csound->ids->iopadr)(csound, csound->ids);
-      csound->ids = csound->ids->nxti;
-    }
-    csound->mode = 0;
-    ATOMIC_SET(p->ip->init_done, 1);
-    /* copy length related parameters back to caller instr */
-    parent_ip->relesing = lcurip->relesing;
-    parent_ip->offbet = lcurip->offbet;
-    parent_ip->offtim = lcurip->offtim;
-    parent_ip->p3 = lcurip->p3;
-    local_ksmps = lcurip->ksmps;
-
-    /* restore globals */
-    csound->ids = saved_ids;
-    csound->curip = parent_ip;
-
-    /* select perf routine and scale xtratim accordingly */
-    if (local_ksmps != CS_KSMPS) {
-      ksmps_scale = CS_KSMPS / local_ksmps;
-      parent_ip->xtratim = lcurip->xtratim / ksmps_scale;
-      p->h.opadr = (SUBR) useropcd1;
-    }
-    else {
-      parent_ip->xtratim = lcurip->xtratim;
-      p->h.opadr = (SUBR) useropcd2;
-    }
-    if (UNLIKELY(csound->oparms->odebug))
-      csound->Message(csound, "EXTRATIM=> cur(%p): %d, parent(%p): %d\n",
-                      lcurip, lcurip->xtratim, parent_ip, parent_ip->xtratim);
-    return OK;
-}
-
-/* IV - Sep 17 2002: dummy user opcode function for not initialised case */
-
-int useropcd(CSOUND *csound, UOPCODE *p)
-{
-
-  if (UNLIKELY(p->h.nxtp))
-    return csoundPerfError(csound, &(p->h), Str("%s: not initialised"),
-                           p->h.optext->t.opcod);
-  else
-    return OK;
-}
-
-/* IV - Sep 1 2002: new opcodes: xin, xout */
-
-int xinset(CSOUND *csound, XIN *p)
-{
-  OPCOD_IOBUFS  *buf;
-  OPCODINFO   *inm;
-  MYFLT **bufs, **tmp;
-  int i;
-  CS_VARIABLE* current;
-
-  (void) csound;
-  buf = (OPCOD_IOBUFS*) p->h.insdshead->opcod_iobufs;
-  inm = buf->opcode_info;
-  bufs = ((UOPCODE*) buf->uopcode_struct)->ar + inm->outchns;
-  tmp = buf->iobufp_ptrs; // this is used to record the UDO's internal vars
-  // for copying at perf-time
-  current = inm->in_arg_pool->head;
-
-  for (i = 0; i < inm->inchns; i++) {
-    void* in = (void*)bufs[i];
-    void* out = (void*)p->args[i];
-    tmp[i + inm->outchns] = out;
-    current->varType->copyValue(csound, out, in);
-    current = current->next;
-  }
-
-  return OK;
-}
-
-int xoutset(CSOUND *csound, XOUT *p)
-{
-  OPCOD_IOBUFS  *buf;
-  OPCODINFO   *inm;
-  MYFLT       **bufs, **tmp;
-  CS_VARIABLE* current;
-  int i;
-
-  (void) csound;
-  buf = (OPCOD_IOBUFS*) p->h.insdshead->opcod_iobufs;
-  inm = buf->opcode_info;
-  bufs = ((UOPCODE*) buf->uopcode_struct)->ar;
-  tmp = buf->iobufp_ptrs; // this is used to record the UDO's internal vars
-  // for copying at perf-time
-  current = inm->out_arg_pool->head;
-
-  for (i = 0; i < inm->outchns; i++) {
-    void* in = (void*)p->args[i];
-    void* out = (void*)bufs[i];
-    tmp[i] = in;
-    // DO NOT COPY K or A vars
-    // Fsigs need to be copied for initialization purposes.
-    if (csoundGetTypeForArg(in) != &CS_VAR_TYPE_K &&
-        /*csoundGetTypeForArg(in) != &CS_VAR_TYPE_F &&*/
-        csoundGetTypeForArg(in) != &CS_VAR_TYPE_A)
-      current->varType->copyValue(csound, out, in);
-    current = current->next;
-  }
-
-  return OK;
-}
-
-/* IV - Sep 8 2002: new opcode: setksmps */
-
-/*
-  This opcode sets the local ksmps for an instrument
-  it can be used on any instrument with the implementation
-  of a mechanism to perform at local ksmps (in kperf etc)
-*/
-//#include "typetabl.h"
-#include "csound_standard_types.h"
-int setksmpsset(CSOUND *csound, SETKSMPS *p)
-{
-
-  unsigned int  l_ksmps, n;
-
-  l_ksmps = (unsigned int) *(p->i_ksmps);
-  if (!l_ksmps) return OK;       /* zero: do not change */
-  if (UNLIKELY(l_ksmps < 1 || l_ksmps > CS_KSMPS ||
-               ((CS_KSMPS / l_ksmps) * l_ksmps != CS_KSMPS))) {
-    return csoundInitError(csound,
-                           Str("setksmps: invalid ksmps value: %d, original: %d"),
-                           l_ksmps, CS_KSMPS);
-  }
-
-  n = CS_KSMPS / l_ksmps;
-  p->h.insdshead->xtratim *= n;
-  CS_KSMPS = l_ksmps;
-  CS_ONEDKSMPS = FL(1.0) / (MYFLT) CS_KSMPS;
-  CS_EKR = csound->esr / (MYFLT) CS_KSMPS;
-  CS_ONEDKR = FL(1.0) / CS_EKR;
-  CS_KICVT = (MYFLT) FMAXLEN / CS_EKR;
-  CS_KCNT *= n;
-
-  /* VL 13-12-13 */
-  /* this sets ksmps and kr local variables */
-  /* lookup local ksmps variable and init with ksmps */
-  INSTRTXT *ip = p->h.insdshead->instr;
-  CS_VARIABLE *var =
-    csoundFindVariableWithName(csound, ip->varPool, "ksmps");
-  MYFLT *varmem = p->h.insdshead->lclbas + var->memBlockIndex;
-  *varmem = CS_KSMPS;
-
-  /* same for kr */
-  var =
-    csoundFindVariableWithName(csound, ip->varPool, "kr");
-  varmem = p->h.insdshead->lclbas + var->memBlockIndex;
-  *varmem = CS_EKR;
-
-  return OK;
-}
-
-/* IV - Oct 16 2002: nstrnum opcode (returns the instrument number of a */
-/* named instrument) */
-
-int nstrnumset(CSOUND *csound, NSTRNUM *p)
-{
-  /* IV - Oct 31 2002 */
-    int res = strarg2insno(csound, p->iname, 0);
-    if (UNLIKELY(res == NOT_AN_INSTRUMENT)) {
-      *p->i_insno = -FL(1.0); return NOTOK;
-    }
-    else {
-      *p->i_insno = (MYFLT)res; return OK;
-    }
-}
-
-int nstrnumset_S(CSOUND *csound, NSTRNUM *p)
-{
-  /* IV - Oct 31 2002 */
-    int res = strarg2insno(csound, ((STRINGDAT *)p->iname)->data, 1);
-    if (UNLIKELY(res == NOT_AN_INSTRUMENT)) {
-      *p->i_insno = -FL(1.0); return NOTOK;
-    }
-    else {
-      *p->i_insno = (MYFLT)res; return OK;
-    }
-}
-
-int nstrstr(CSOUND *csound, NSTRSTR *p)
-{
-    char *ss;
-    if (csound->engineState.instrumentNames) {
-      ss = cs_inverse_hash_get(csound,
-                               csound->engineState.instrumentNames,
-                               (int)*p->num);
-    }
-    else ss= "";
-    mfree(csound,p->ans->data);
-    p->ans->data = cs_strdup(csound, ss);
-    p->ans->size = strlen(ss);
-    return OK;
-}
-
 /* unlink expired notes from activ chain */
 /*      and mark them inactive           */
 /*    close any files in each fdchain    */
-
-/* IV - Feb 05 2005: changed to double */
-
-void beatexpire(CSOUND *csound, double beat)
+void beat_expire(CSOUND *csound, cs_double beat)
 {
   INSDS  *ip;
  strt:
@@ -1754,10 +2381,10 @@ void beatexpire(CSOUND *csound, double beat)
         set_xtratim(csound, ip);      /* enter release stage */
         csound->frstoff = ip->nxtoff; /* update turnoff list */
 #ifdef BETA
-        if (UNLIKELY(csound->oparms->odebug))
-          csound->Message(csound, "Calling schedofftim line %d\n", __LINE__);
+        if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
+          csound->Message(csound, "Calling sched_off_time line %d\n", __LINE__);
 #endif
-        schedofftim(csound, ip);
+        sched_off_time(csound, ip);
         goto strt;                    /* and start again */
       }
       else
@@ -1765,7 +2392,7 @@ void beatexpire(CSOUND *csound, double beat)
     }                         /* deactivates subinstrument instances */
     while ((ip = ip->nxtoff) != NULL && ip->offbet <= beat);
     csound->frstoff = ip;
-    if (UNLIKELY(csound->oparms->odebug)) {
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
       csound->Message(csound, "deactivated all notes to beat %7.3f\n", beat);
       csound->Message(csound, "frstoff = %p\n", (void*) csound->frstoff);
     }
@@ -1775,10 +2402,7 @@ void beatexpire(CSOUND *csound, double beat)
 /* unlink expired notes from activ chain */
 /*      and mark them inactive           */
 /*    close any files in each fdchain    */
-
-/* IV - Feb 05 2005: changed to double */
-
-void timexpire(CSOUND *csound, double time)
+void time_expire(CSOUND *csound, cs_double time)
 {
   INSDS  *ip;
 
@@ -1791,10 +2415,10 @@ void timexpire(CSOUND *csound, double time)
         set_xtratim(csound, ip);      /* enter release stage */
         csound->frstoff = ip->nxtoff; /* update turnoff list */
 #ifdef BETA
-        if (UNLIKELY(csound->oparms->odebug))
-          csound->Message(csound, "Calling schedofftim line %d\n", __LINE__);
+        if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME))
+          csound->Message(csound, "Calling sched_off_time line %d\n", __LINE__);
 #endif
-        schedofftim(csound, ip);
+        sched_off_time(csound, ip);
 
         goto strt;                    /* and start again */
       }
@@ -1804,540 +2428,17 @@ void timexpire(CSOUND *csound, double time)
     }                         /* deactivates subinstrument instances */
     while ((ip = ip->nxtoff) != NULL && ip->offtim <= time);
     csound->frstoff = ip;
-    if (UNLIKELY(csound->oparms->odebug)) {
+    if (UNLIKELY(csoundGetDebug(csound) & DEBUG_RUNTIME)) {
       csound->Message(csound, "deactivated all notes to time %7.3f\n", time);
       csound->Message(csound, "frstoff = %p\n", (void*) csound->frstoff);
     }
   }
 }
 
-/**
-   this was rewritten for Csound 6 to allow
-   PARCS and local ksmps instruments
-*/
-
-int subinstr(CSOUND *csound, SUBINST *p)
-{
-  OPDS    *saved_pds = CS_PDS;
-  MYFLT   *pbuf;
-  uint32_t frame, chan;
-  unsigned int nsmps = CS_KSMPS;
-  INSDS *ip = p->ip;
-  int done = ATOMIC_GET(p->ip->init_done);
-
-  if (UNLIKELY(!done)) /* init not done, exit */
-    return OK;
-
-  //printf("%s\n", p->ip->strarg);
-
-  if (UNLIKELY(p->ip == NULL)) {                /* IV - Oct 26 2002 */
-    return csoundPerfError(csound, &(p->h),
-                           Str("subinstr: not initialised"));
-  }
-  /* copy current spout buffer and clear it */
-  ip->spout = (MYFLT*) p->saved_spout.auxp;
-  memset(ip->spout, 0, csound->nspout*sizeof(MYFLT));
-  csound->spoutactive = 0;
-
-  /* update release flag */
-  ip->relesing = p->parent_ip->relesing;   /* IV - Nov 16 2002 */
-
-  /*  run each opcode  */
-  if (csound->ksmps == ip->ksmps) {
-    int error = 0;
-    ip->kcounter++;
-    if ((CS_PDS = (OPDS *) (ip->nxtp)) != NULL) {
-      CS_PDS->insdshead->pds = NULL;
-      do {
-        error = (*CS_PDS->opadr)(csound, CS_PDS);
-        if (CS_PDS->insdshead->pds != NULL) {
-          CS_PDS = CS_PDS->insdshead->pds;
-          CS_PDS->insdshead->pds = NULL;
-        }
-      } while (error == 0 && (CS_PDS = CS_PDS->nxtp));
-    }
-
-  }
-  else {
-    int i, n = csound->nspout, start = 0;
-    int lksmps = ip->ksmps;
-    int incr = csound->nchnls*lksmps;
-    int offset =  ip->ksmps_offset;
-    int early = ip->ksmps_no_end;
-    ip->spin = csound->spin;
-    ip->kcounter =  csound->kcounter*csound->ksmps/lksmps;
-
-    /* we have to deal with sample-accurate code
-       whole CS_KSMPS blocks are offset here, the
-       remainder is left to each opcode to deal with.
-    */
-    while (offset >= lksmps) {
-      offset -= lksmps;
-      start += csound->nchnls;
-    }
-    ip->ksmps_offset = offset;
-    if (early) {
-      n -= (early*csound->nchnls);
-      ip->ksmps_no_end = early % lksmps;
-    }
-
-    for (i=start; i < n; i+=incr, ip->spin+=incr, ip->spout+=incr) {
-      ip->kcounter++;
-      if ((CS_PDS = (OPDS *) (ip->nxtp)) != NULL) {
-        int error = 0;
-        CS_PDS->insdshead->pds = NULL;
-        do {
-          if(UNLIKELY(!ATOMIC_GET8(p->ip->actflg))){
-            memset(p->ar, 0, sizeof(MYFLT)*CS_KSMPS*p->OUTCOUNT);
-            goto endin;
-          }
-          error = (*CS_PDS->opadr)(csound, CS_PDS);
-          if (CS_PDS->insdshead->pds != NULL) {
-            CS_PDS = CS_PDS->insdshead->pds;
-            CS_PDS->insdshead->pds = NULL;
-          }
-        } while (error == 0 && (CS_PDS = CS_PDS->nxtp));
-      }
-    }
-    ip->spout = (MYFLT*) p->saved_spout.auxp;
-  }
-  /* copy outputs */
-  for (chan = 0; chan < p->OUTOCOUNT; chan++) {
-    for (pbuf = ip->spout + chan*nsmps, frame = 0;
-         frame < nsmps; frame++) {
-      p->ar[chan][frame] = pbuf[frame];
-      //printf("%f\n", p->ar[chan][frame]);
-      //pbuf += csound->nchnls;
-    }
-  }
-  endin:
-  CS_PDS = saved_pds;
-  /* check if instrument was deactivated (e.g. by perferror) */
-  if (!p->ip) {                                  /* loop to last opds */
-    while (CS_PDS->nxtp) {
-      CS_PDS = CS_PDS->nxtp;
-    }
-  }
-  return OK;
-}
-
-/* IV - Sep 17 2002 -- case 1: local ksmps is used */
-
-int useropcd1(CSOUND *csound, UOPCODE *p)
-{
-  OPDS    *saved_pds = CS_PDS;
-  int    g_ksmps, ofs, early, offset, i;
-  OPCODINFO   *inm;
-  CS_VARIABLE* current;
-  INSDS    *this_instr = p->ip;
-  MYFLT** internal_ptrs = p->buf->iobufp_ptrs;
-  MYFLT** external_ptrs = p->ar;
-  int done;
-
-
-  done = ATOMIC_GET(p->ip->init_done);
-  if (UNLIKELY(!done)) /* init not done, exit */
-    return OK;
-
-  p->ip->relesing = p->parent_ip->relesing;   /* IV - Nov 16 2002 */
-  early = p->h.insdshead->ksmps_no_end;
-  offset = p->h.insdshead->ksmps_offset;
-  p->ip->spin = p->parent_ip->spin;
-  p->ip->spout = p->parent_ip->spout;
-  inm = p->buf->opcode_info;
-
-  /* global ksmps is the caller instr ksmps minus sample-accurate end */
-  g_ksmps = CS_KSMPS - early;
-
-  /* sample-accurate offset */
-  ofs = offset;
-
-  /* clear offsets, since with CS_KSMPS=1
-     they don't apply to opcodes, but to the
-     calling code (ie. this code)
-  */
-  this_instr->ksmps_offset = 0;
-  this_instr->ksmps_no_end = 0;
-
-  if (this_instr->ksmps == 1) {           /* special case for local kr == sr */
-    do {
-      this_instr->kcounter++; /*kcounter needs to be incremented BEFORE perf */
-      /* copy inputs */      current = inm->in_arg_pool->head;
-      for (i = 0; i < inm->inchns; i++) {
-        // this hardcoded type check for non-perf time vars needs to change
-        //to use generic code...
-        // skip a-vars for now, handle uniquely within performance loop
-        if (current->varType != &CS_VAR_TYPE_I &&
-            current->varType != &CS_VAR_TYPE_b &&
-            current->varType != &CS_VAR_TYPE_A &&
-            current->subType != &CS_VAR_TYPE_I &&
-            current->subType != &CS_VAR_TYPE_A) {
-          // This one checks if an array has a subtype of 'i'
-          void* in = (void*)external_ptrs[i + inm->outchns];
-          void* out = (void*)internal_ptrs[i + inm->outchns];
-          current->varType->copyValue(csound, out, in);
-        } else if (current->varType == &CS_VAR_TYPE_A) {
-          MYFLT* in = (void*)external_ptrs[i + inm->outchns];
-          MYFLT* out = (void*)internal_ptrs[i + inm->outchns];
-          *out = *(in + ofs);
-        } else if (current->varType == &CS_VAR_TYPE_ARRAY &&
-                   current->subType == &CS_VAR_TYPE_A) {
-          ARRAYDAT* src = (ARRAYDAT*)external_ptrs[i + inm->outchns];
-          ARRAYDAT* target = (ARRAYDAT*)internal_ptrs[i + inm->outchns];
-          int count = src->sizes[0];
-          int j;
-          if (src->dimensions > 1) {
-            for (j = 0; j < src->dimensions; j++) {
-              count *= src->sizes[j];
-            }
-          }
-
-          for (j = 0; j < count; j++) {
-            int memberOffset = j * (src->arrayMemberSize / sizeof(MYFLT));
-            MYFLT* in = src->data + memberOffset;
-            MYFLT* out = target->data + memberOffset;
-            *out = *(in + ofs);
-          }
-        }
-        current = current->next;
-      }
-
-      if ((CS_PDS = (OPDS *) (this_instr->nxtp)) != NULL) {
-        int error = 0;
-        CS_PDS->insdshead->pds = NULL;
-        do {
-          if(UNLIKELY(!ATOMIC_GET8(p->ip->actflg))) goto endop;
-          error = (*CS_PDS->opadr)(csound, CS_PDS);
-          if (CS_PDS->insdshead->pds != NULL &&
-              CS_PDS->insdshead->pds->insdshead) {
-            CS_PDS = CS_PDS->insdshead->pds;
-            CS_PDS->insdshead->pds = NULL;
-          }
-        } while (error == 0 && p->ip != NULL
-                 && (CS_PDS = CS_PDS->nxtp));
-      }
-
-      /* copy a-sig outputs, accounting for offset */
-      current = inm->out_arg_pool->head;
-      for (i = 0; i < inm->outchns; i++) {
-        if (current->varType == &CS_VAR_TYPE_A) {
-          MYFLT* in = (void*)internal_ptrs[i];
-          MYFLT* out = (void*)external_ptrs[i];
-          *(out + ofs) = *in;
-        } else if (current->varType == &CS_VAR_TYPE_ARRAY &&
-                   current->subType == &CS_VAR_TYPE_A) {
-          ARRAYDAT* src = (ARRAYDAT*)internal_ptrs[i];
-          ARRAYDAT* target = (ARRAYDAT*)external_ptrs[i];
-          int count = src->sizes[0];
-          int j;
-          if (src->dimensions > 1) {
-            for (j = 0; j < src->dimensions; j++) {
-              count *= src->sizes[j];
-            }
-          }
-
-          for (j = 0; j < count; j++) {
-            int memberOffset = j * (src->arrayMemberSize / sizeof(MYFLT));
-            MYFLT* in = src->data + memberOffset;
-            MYFLT* out = target->data + memberOffset;
-            *(out + ofs) = *in;
-          }
-        }
-
-        current = current->next;
-      }
-
-      this_instr->spout += csound->nchnls;
-      this_instr->spin  += csound->nchnls;
-    } while (++ofs < g_ksmps);
-  }
-  else {
-    /* generic case for local kr != sr */
-    /* we have to deal with sample-accurate code
-       whole CS_KSMPS blocks are offset here, the
-       remainder is left to each opcode to deal with.
-    */
-    int start = 0;
-    int lksmps = this_instr->ksmps;
-    while (ofs >= lksmps) {
-      ofs -= lksmps;
-      start++;
-    }
-    this_instr->ksmps_offset = ofs;
-    ofs = start;
-    if (UNLIKELY(early)) this_instr->ksmps_no_end = early % lksmps;
-
-    do {
-      this_instr->kcounter++;
-      /* copy a-sig inputs, accounting for offset */
-      size_t asigSize = (this_instr->ksmps * sizeof(MYFLT));
-      current = inm->in_arg_pool->head;
-      for (i = 0; i < inm->inchns; i++) {
-        // this hardcoded type check for non-perf time vars needs to change
-        // to use generic code...
-        // skip a-vars for now, handle uniquely within performance loop
-        if (current->varType != &CS_VAR_TYPE_I &&
-            current->varType != &CS_VAR_TYPE_b &&
-            current->varType != &CS_VAR_TYPE_A &&
-            current->subType != &CS_VAR_TYPE_I &&
-            current->subType != &CS_VAR_TYPE_A) {
-          // This one checks if an array has a subtype of 'i'
-          void* in = (void*)external_ptrs[i + inm->outchns];
-          void* out = (void*)internal_ptrs[i + inm->outchns];
-          current->varType->copyValue(csound, out, in);
-        } else if (current->varType == &CS_VAR_TYPE_A) {
-          MYFLT* in = (void*)external_ptrs[i + inm->outchns];
-          MYFLT* out = (void*)internal_ptrs[i + inm->outchns];
-          memcpy(out, in + ofs, asigSize);
-        } else if (current->varType == &CS_VAR_TYPE_ARRAY &&
-                   current->subType == &CS_VAR_TYPE_A) {
-          ARRAYDAT* src = (ARRAYDAT*)external_ptrs[i + inm->outchns];
-          ARRAYDAT* target = (ARRAYDAT*)internal_ptrs[i + inm->outchns];
-          int count = src->sizes[0];
-          int j;
-          if (src->dimensions > 1) {
-            for (j = 0; j < src->dimensions; j++) {
-              count *= src->sizes[j];
-            }
-          }
-
-          for (j = 0; j < count; j++) {
-            int memberOffset = j * (src->arrayMemberSize / sizeof(MYFLT));
-            MYFLT* in = src->data + memberOffset;
-            MYFLT* out = target->data + memberOffset;
-            memcpy(out, in + ofs, asigSize);
-          }
-        }
-        current = current->next;
-      }
-
-      /*  run each opcode  */
-      if ((CS_PDS = (OPDS *) (this_instr->nxtp)) != NULL) {
-        int error = 0;
-        CS_PDS->insdshead->pds = NULL;
-        do {
-          if(UNLIKELY(!ATOMIC_GET8(p->ip->actflg))) goto endop;
-          error = (*CS_PDS->opadr)(csound, CS_PDS);
-          if (CS_PDS->insdshead->pds != NULL &&
-              CS_PDS->insdshead->pds->insdshead) {
-            CS_PDS = CS_PDS->insdshead->pds;
-            CS_PDS->insdshead->pds = NULL;
-          }
-        } while (error == 0 && p->ip != NULL
-                 && (CS_PDS = CS_PDS->nxtp));
-      }
-
-      /* copy a-sig outputs, accounting for offset */
-      current = inm->out_arg_pool->head;
-      for (i = 0; i < inm->outchns; i++) {
-        if (current->varType == &CS_VAR_TYPE_A) {
-          MYFLT* in = (void*)internal_ptrs[i];
-          MYFLT* out = (void*)external_ptrs[i];
-          memcpy(out + ofs, in, asigSize);
-        } else if (current->varType == &CS_VAR_TYPE_ARRAY &&
-                   current->subType == &CS_VAR_TYPE_A) {
-          ARRAYDAT* src = (ARRAYDAT*)internal_ptrs[i];
-          ARRAYDAT* target = (ARRAYDAT*)external_ptrs[i];
-          int count = src->sizes[0];
-          int j;
-          if (src->dimensions > 1) {
-            for (j = 0; j < src->dimensions; j++) {
-              count *= src->sizes[j];
-            }
-          }
-
-          for (j = 0; j < count; j++) {
-            int memberOffset = j * (src->arrayMemberSize / sizeof(MYFLT));
-            MYFLT* in = src->data + memberOffset;
-            MYFLT* out = target->data + memberOffset;
-            memcpy(out + ofs, in, asigSize);
-          }
-
-        }
-
-        current = current->next;
-      }
-
-      this_instr->spout += csound->nchnls*lksmps;
-      this_instr->spin  += csound->nchnls*lksmps;
-
-    } while ((ofs += this_instr->ksmps) < g_ksmps);
-  }
-
-
-  /* copy outputs */
-  current = inm->out_arg_pool->head;
-  for (i = 0; i < inm->outchns; i++) {
-    // this hardcoded type check for non-perf time vars needs to change
-    // to use generic code...
-    if (current->varType != &CS_VAR_TYPE_I &&
-        current->varType != &CS_VAR_TYPE_b &&
-        current->subType != &CS_VAR_TYPE_I) {
-      void* in = (void*)internal_ptrs[i];
-      void* out = (void*)external_ptrs[i];
-
-      if (current->varType == &CS_VAR_TYPE_A) {
-        /* clear the beginning portion of outputs for sample accurate end */
-        if (offset) {
-          memset(out, '\0', sizeof(MYFLT) * offset);
-        }
-
-        /* clear the end portion of outputs for sample accurate end */
-        if (early) {
-          memset((char*)out + g_ksmps, '\0', sizeof(MYFLT) * early);
-        }
-      } else if (current->varType == &CS_VAR_TYPE_ARRAY &&
-                 current->subType == &CS_VAR_TYPE_A) {
-        if (offset || early) {
-          ARRAYDAT* outDat = (ARRAYDAT*)out;
-          int count = outDat->sizes[0];
-          int j;
-          if (outDat->dimensions > 1) {
-            for (j = 0; j < outDat->dimensions; j++) {
-              count *= outDat->sizes[j];
-            }
-          }
-
-          if (offset) {
-            for (j = 0; j < count; j++) {
-              int memberOffset = j * (outDat->arrayMemberSize / sizeof(MYFLT));
-              MYFLT* outMem = outDat->data + memberOffset;
-              memset(outMem, '\0', sizeof(MYFLT) * offset);
-            }
-          }
-
-          if (early) {
-            for (j = 0; j < count; j++) {
-              int memberOffset = j * (outDat->arrayMemberSize / sizeof(MYFLT));
-              MYFLT* outMem = outDat->data + memberOffset;
-              memset(outMem + g_ksmps, '\0', sizeof(MYFLT) * early);
-            }
-          }
-        }
-
-      } else {
-        current->varType->copyValue(csound, out, in);
-      }
-    }
-    current = current->next;
-  }
- endop:
-  CS_PDS = saved_pds;
-  /* check if instrument was deactivated (e.g. by perferror) */
-  if (!p->ip)                                         /* loop to last opds */
-    while (CS_PDS && CS_PDS->nxtp) CS_PDS = CS_PDS->nxtp;
-  return OK;
-}
-
-/* IV - Sep 17 2002 -- case 2: simplified routine for no local ksmps */
-
-int useropcd2(CSOUND *csound, UOPCODE *p)
-{
-  OPDS    *saved_pds = CS_PDS;
-  MYFLT   **tmp;
-  OPCODINFO   *inm;
-  CS_VARIABLE* current;
-  int i, done;
-
-
-  inm = (OPCODINFO*) p->h.optext->t.oentry->useropinfo; /* FIXME value not used */
-  done = ATOMIC_GET(p->ip->init_done);
-
-  if (UNLIKELY(!done)) /* init not done, exit */
-    return OK;
-
-  p->ip->spin = p->parent_ip->spin;
-  p->ip->spout = p->parent_ip->spout;
-  p->ip->kcounter++;  /* kcount should be incremented BEFORE perf */
-
-  if (UNLIKELY(!(CS_PDS = (OPDS*) (p->ip->nxtp))))
-    goto endop; /* no perf code */
-
-  /* IV - Nov 16 2002: update release flag */
-  p->ip->relesing = p->parent_ip->relesing;
-  tmp = p->buf->iobufp_ptrs;
-  inm = p->buf->opcode_info;
-
-  MYFLT** internal_ptrs = tmp;
-  MYFLT** external_ptrs = p->ar;
-
-  /* copy inputs */
-  current = inm->in_arg_pool->head;
-  for (i = 0; i < inm->inchns; i++) {
-    // this hardcoded type check for non-perf time vars needs to
-    //change to use generic code...
-    if (current->varType != &CS_VAR_TYPE_I &&
-        current->varType != &CS_VAR_TYPE_b &&
-        current->subType != &CS_VAR_TYPE_I) {
-      if (current->varType == &CS_VAR_TYPE_A && CS_KSMPS == 1) {
-        *internal_ptrs[i + inm->outchns] = *external_ptrs[i + inm->outchns];
-      } else {
-        void* in = (void*)external_ptrs[i + inm->outchns];
-        void* out = (void*)internal_ptrs[i + inm->outchns];
-        current->varType->copyValue(csound, out, in);
-        //                memcpy(out, in, p->buf->in_arg_sizes[i]);
-      }
-    }
-    current = current->next;
-  }
-
-  /*  run each opcode  */
-  {
-  int error = 0;
-  CS_PDS->insdshead->pds = NULL;
-  do {
-    if(UNLIKELY(!ATOMIC_GET8(p->ip->actflg))) goto endop;
-    error = (*CS_PDS->opadr)(csound, CS_PDS);
-    if (CS_PDS->insdshead->pds != NULL &&
-        CS_PDS->insdshead->pds->insdshead) {
-      CS_PDS = CS_PDS->insdshead->pds;
-      CS_PDS->insdshead->pds = NULL;
-    }
-  } while (error == 0 && p->ip != NULL
-           && (CS_PDS = CS_PDS->nxtp));
-  }
-
-
-  /* copy outputs */
-  current = inm->out_arg_pool->head;
-  for (i = 0; i < inm->outchns; i++) {
-    // this hardcoded type check for non-perf time vars needs to change to
-    // use generic code...
-    if (current->varType != &CS_VAR_TYPE_I &&
-        current->varType != &CS_VAR_TYPE_b &&
-        current->subType != &CS_VAR_TYPE_I) {
-      if (current->varType == &CS_VAR_TYPE_A && CS_KSMPS == 1) {
-        *external_ptrs[i] = *internal_ptrs[i];
-      } else {
-        void* in = (void*)internal_ptrs[i];
-        void* out = (void*)external_ptrs[i];
-        //            memcpy(out, in, p->buf->out_arg_sizes[i]);
-        current->varType->copyValue(csound, out, in);
-      }
-    }
-    current = current->next;
-  }
-
- endop:
-
-
-  /* restore globals */
-  CS_PDS = saved_pds;
-  /* check if instrument was deactivated (e.g. by perferror) */
-  if (!p->ip)  {                   /* loop to last opds */
-    while (CS_PDS && CS_PDS->nxtp) {
-      CS_PDS = CS_PDS->nxtp;
-    }
-  }
-  return OK;
-}
-
-/* UTILITY FUNCTIONS FOR LABELS */
-
-int findLabelMemOffset(CSOUND* csound, INSTRTXT* ip, char* labelName) {
+static int32_t find_label_mem_offset(CSOUND* csound, INSTRTXT* ip, char* labelName) {
   IGN(csound);
   OPTXT* optxt = (OPTXT*) ip;
-  int offset = 0;
+  int32_t offset = 0;
 
   while ((optxt = optxt->nxtop) != NULL) {
     TEXT* t = &optxt->t;
@@ -2352,25 +2453,282 @@ int findLabelMemOffset(CSOUND* csound, INSTRTXT* ip, char* labelName) {
 }
 
 /* create instance of an instr template */
-/*   allocates and sets up all pntrs    */
+/* allocates and sets up all pntrs      */
+/**
+ * Set up argument pointers (argpp) for a single opcode.
+ * This can be called during initial instantiation or to reinitialize
+ * argument pointers for reused instrument instances.
+ */
+static void setup_opcode_argpp(
+  CSOUND *csound, OPDS *opds, TEXT *ttp,
+  const OENTRY *ep, INSDS *ip, INSTRTXT *tp,
+  cs_float *lclbas, CS_VAR_MEM *lcloffbas,
+  char *opMemStart
+) {
+    cs_float **argpp;
+    ARG *arg;
+    int n;
+    int argStringCount;
 
-static void instance(CSOUND *csound, int insno)
+    if (ep->useropinfo == NULL)
+      argpp = (cs_float **) ((char *) opds + sizeof(OPDS));
+    else          /* user defined opcodes are a special case */
+      argpp = &(((UOPCODE *) ((char *) opds))->ar[0]);
+
+    /* Set up output arguments */
+    arg = ttp->outArgs;
+    for (n = 0; arg != NULL; n++) {
+      cs_float *fltp;
+      CS_VARIABLE* var = (CS_VARIABLE*)arg->argPtr;
+      if (arg->type == ARG_GLOBAL || arg->type == ARG_LOCAL) {
+        if (arg->type == ARG_LOCAL) {
+          if (UNLIKELY(var == NULL)) {
+            csound->Die(csound,
+                        Str("setup_opcode_argpp:"
+                            " NULL local variable pointer for out-arg of %s"),
+                        ep->opname ? ep->opname : "(null)");
+          } else {
+            fltp = lclbas + var->memBlockIndex;
+          }
+        } else fltp = &(var->memBlock->value);
+
+        if (arg->structPath != NULL) {
+          char* path = csoundStrdup(csound, arg->structPath);
+          char *next, *th;
+
+          next = cs_strtok_r(path, ".", &th);
+          while (next != NULL) {
+            const CS_TYPE* type = csoundGetTypeForArg(fltp);
+            CS_STRUCT_VAR* structVar = (CS_STRUCT_VAR*)fltp;
+            CONS_CELL* members = type->members;
+            int32_t i = 0;
+            int32_t found = 0;
+            while(members != NULL) {
+              CS_VARIABLE* member = (CS_VARIABLE*)members->value;
+              if (!strcmp(member->varName, next)) {
+                fltp = &(structVar->members[i]->value);
+                found = 1;
+                break;
+              }
+              i++;
+              members = members->next;
+            }
+            if (!found) {
+              csound->Die(csound,
+                Str("setup_opcode_argpp: struct member '%s' not found in structPath '%s' for %s"),
+                next, arg->structPath, ep->opname ? ep->opname : "(null)");
+              csound->Free(csound, path);
+            }
+            next = cs_strtok_r(NULL, ".", &th);
+          }
+          csound->Free(csound, path);
+        }
+      }
+      else if (arg->type == ARG_PFIELD) {
+        CS_VAR_MEM* pfield = lcloffbas + arg->index;
+        fltp = &(pfield->value);
+      }
+      else {
+        csound->Die(csound,
+          Str("setup_opcode_argpp: Unhandled argument type (%d) for out-arg of %s"),
+          arg->type,
+          ep->opname ? ep->opname : "(null)");
+      }
+      argpp[n] = fltp;
+      arg = arg->next;
+    }
+
+    for (argStringCount = args_required(ep->outypes); n < argStringCount; n++) {
+      argpp[n] = NULL;
+    }
+
+    /* Set up input arguments */
+    arg = ttp->inArgs;
+    ip->lclbas = lclbas;
+    int providedIn = 0;
+    for (; arg != NULL; n++, arg = arg->next, providedIn++) {
+      if (arg->type == ARG_CONSTANT) {
+        CS_VAR_MEM *varMem = (CS_VAR_MEM*)arg->argPtr;
+        argpp[n] = &varMem->value;
+      }
+      else if (arg->type == ARG_STRING) {
+        argpp[n] = (cs_float*)(arg->argPtr);
+      }
+      else if (arg->type == ARG_PFIELD) {
+        CS_VAR_MEM* pfield = lcloffbas + arg->index;
+        argpp[n] = &(pfield->value);
+      }
+      else if (arg->type == ARG_LOCAL || arg->type == ARG_GLOBAL){
+        CS_VARIABLE* var = (CS_VARIABLE*)(arg->argPtr);
+        argpp[n] = arg->type == ARG_LOCAL ?
+          lclbas + var->memBlockIndex :
+          &(var->memBlock->value);
+
+        if (arg->structPath != NULL) {
+          char* path = csoundStrdup(csound, arg->structPath);
+          char *next, *th;
+          cs_float* fltp = argpp[n];
+          next = cs_strtok_r(path, ".", &th);
+          while (next != NULL) {
+            const CS_TYPE* type = csoundGetTypeForArg(fltp);
+            CS_STRUCT_VAR* structVar = (CS_STRUCT_VAR*)fltp;
+            if (type == NULL || structVar == NULL || structVar->members == NULL)
+              break;
+            CONS_CELL* members = type->members;
+            int32_t i = 0;
+            while(members != NULL) {
+              CS_VARIABLE* member = (CS_VARIABLE*)members->value;
+              if (!strcmp(member->varName, next)) {
+                fltp = &(structVar->members[i]->value);
+                break;
+              }
+              i++;
+              members = members->next;
+            }
+            next = cs_strtok_r(NULL, ".", &th);
+          }
+          argpp[n] = fltp;
+          csound->Free(csound, path);
+        }
+      }
+      else if (arg->type == ARG_LABEL) {
+        argpp[n] = (cs_float*)(opMemStart +
+                            find_label_mem_offset(csound, tp, (char*)arg->argPtr));
+      }
+      else {
+        argpp[n] = (cs_float*)(opMemStart +
+                    ((TEXT*)arg->argPtr)->inArgCount * sizeof(cs_float *));
+      }
+    }
+}
+
+
+/**
+ * Reinitialize all argument pointers for opcodes in an instrument instance.
+ * This should be called when reusing a UDO instance to ensure argpp pointers
+ * are fresh and not stale from previous usage.
+ */
+static void csoundReinitInstrumentArgpp(CSOUND *csound, INSDS *ip)
+{
+    INSTRTXT *tp = ip->instr;
+    OPTXT *optxt = (OPTXT*)tp;
+    OPDS *opds;
+    char *nxtopds;
+    cs_float *lclbas = ip->lclbas;
+    CS_VAR_MEM *lcloffbas = (CS_VAR_MEM*)&ip->p0;
+
+    /* Calculate opcode memory start */
+    char *opMemStart = (char*) lclbas + tp->varPool->poolSize +
+        (tp->varPool->varCount * CS_FLOAT_ALIGN(CS_VAR_TYPE_OFFSET));
+
+    nxtopds = opMemStart;
+
+    /* Iterate through all opcodes and reinit their argpp */
+    while ((optxt = optxt->nxtop) != NULL) {
+        TEXT *ttp = &optxt->t;
+        OENTRY *ep = ttp->oentry;
+
+        if (UNLIKELY(ep == NULL || ep->opname == NULL)) {
+            continue;
+        }
+
+        opds = (OPDS*) nxtopds;
+        nxtopds += ep->dsblksiz;
+
+        if (UNLIKELY(strcmp(ep->opname, "endin") == 0 || strcmp(ep->opname, "endop") == 0))
+            break;
+
+        if (UNLIKELY(strcmp(ep->opname, "pset") == 0 || strcmp(ep->opname, "$label") == 0))
+            continue;
+
+        /* Reinit argpp for this opcode */
+        setup_opcode_argpp(csound, opds, ttp, ep, ip, tp, lclbas, lcloffbas, opMemStart);
+    }
+}
+
+static CS_VAR_MEM *instance_local_memory(CS_VARIABLE *var, cs_float *lclbas)
+{
+  char *value = (char *)(lclbas + var->memBlockIndex);
+
+  var->memBlock = (CS_VAR_MEM *)(value - CS_VAR_TYPE_OFFSET);
+  return var->memBlock;
+}
+
+static void initialize_instance_reserved_variables(CSOUND *csound, INSDS *ip,
+                                                    cs_float *lclbas)
+{
+  static const char *const numericNames[] = { "ksmps", "kr", "sr" };
+  cs_float numericValues[] = { csound->ksmps, csound->ekr, csound->esr };
+  CS_VAR_POOL *pool;
+  CS_VARIABLE *var;
+  size_t index;
+
+  if (UNLIKELY(ip == NULL || ip->instr == NULL || lclbas == NULL)) {
+    return;
+  }
+  pool = ip->instr->varPool;
+  if (UNLIKELY(pool == NULL)) {
+    return;
+  }
+
+  for (index = 0; index < sizeof(numericNames) / sizeof(numericNames[0]);
+       index++) {
+    var = csoundFindVariableWithName(csound, pool, numericNames[index]);
+    if (var != NULL) {
+      instance_local_memory(var, lclbas)->value = numericValues[index];
+    }
+  }
+
+  var = csoundFindVariableWithName(csound, pool, "this_instr");
+  if (var != NULL) {
+    INSTREF source = { ip->instr, 0 };
+    INSTREF *destination =
+      (INSTREF *)&instance_local_memory(var, lclbas)->value;
+
+    var->varType->copyValue(csound, var->varType, destination, &source, NULL);
+    destination->readonly = 1;
+  }
+
+  var = csoundFindVariableWithName(csound, pool, "this");
+  if (var != NULL) {
+    INSTANCEREF source = { ip, 0 };
+    INSTANCEREF *destination =
+      (INSTANCEREF *)&instance_local_memory(var, lclbas)->value;
+
+    var->varType->copyValue(csound, var->varType, destination, &source, NULL);
+    destination->readonly = 1;
+  }
+}
+
+void recycle_udo_instance(CSOUND *csound, INSDS *ip)
+{
+  /* Reset local values and their cached argument pointers before deact()
+     publishes the frame on the reusable-instance list. Callers must first
+     exclude deinit callbacks and resources that still depend on local data. */
+  free_instr_var_memory(csound, ip);
+  if (ip->lclbas != NULL) {
+    csoundInitializeVarPool(csound, ip->lclbas, ip->instr->varPool);
+    initialize_instance_reserved_variables(csound, ip, ip->lclbas);
+    csoundReinitInstrumentArgpp(csound, ip);
+  }
+  deact(csound, ip);
+}
+
+static INSDS *instantiate(CSOUND *csound, int32_t insno, int32_t link)
 {
   INSTRTXT  *tp;
   INSDS     *ip;
   OPTXT     *optxt;
-  OPDS      *opds, *prvids, *prvpds;
+  OPDS      *opds, *prvids, *prvpds, *prvpdd;
   const OENTRY  *ep;
-  int       i, n, pextent, pextra, pextrab;
+  int32_t       i, n, pextent, pextra, pextrab;
   char      *nxtopds, *opdslim;
-  MYFLT     **argpp, *lclbas;
+  cs_float     *lclbas;
   CS_VAR_MEM *lcloffbas; // start of pfields
   char*     opMemStart;
 
   OPARMS    *O = csound->oparms;
-  int       odebug = O->odebug;
-  ARG*      arg;
-  int       argStringCount;
+  int32_t   odebug = csoundGetDebug(csound) & DEBUG_RUNTIME;
   CS_VARIABLE* current;
 
   tp = csound->engineState.instrtxtp[insno];
@@ -2382,47 +2740,51 @@ static void instance(CSOUND *csound, int insno)
   if (O->midiVelocity>n) n = O->midiVelocity;
   if (O->midiVelocityAmp>n) n = O->midiVelocityAmp;
   pextra = n-3;
-  pextrab = ((i = tp->pmax - 3L) > 0 ? (int) i * sizeof(CS_VAR_MEM) : 0);
+  pextrab = ((i = tp->pmax - 3L) > 0 ? (int32_t) (i * sizeof(CS_VAR_MEM)) : 0);
   /* alloc new space,  */
   pextent = sizeof(INSDS) + pextrab + pextra*sizeof(CS_VAR_MEM);
+
+  // Check for null or corrupted varPool to prevent segfault
+  size_t varPoolSize = 0;
+  size_t varPoolCount = 0;
+  if (tp->varPool != NULL && (uintptr_t)tp->varPool >= 0x1000) {
+    varPoolSize = tp->varPool->poolSize;
+    varPoolCount = tp->varPool->varCount;
+  } else {
+    // Treat this as a fatal initialization error
+    csound->InitError(csound,
+                      Str("Fatal initialization error in instantiate: tp->varPool is null or corrupted (tp=%p). "
+                      "This indicates a serious problem with instrument initialization."),
+                      (void*)tp);
+    return NULL;  // Abort the instantiation path
+  }
+
   ip =
     (INSDS*) csound->Calloc(csound,
-                            (size_t) pextent + tp->varPool->poolSize +
-                            (tp->varPool->varCount *
+                            (size_t) pextent + varPoolSize +
+                            (varPoolCount *
                              CS_FLOAT_ALIGN(CS_VAR_TYPE_OFFSET)) +
-                            (tp->varPool->varCount * sizeof(CS_VARIABLE*)) +
+                            (varPoolCount * sizeof(CS_VARIABLE*)) +
                             tp->opdstot);
+  if (UNLIKELY(ip == NULL))
+    return NULL;
   ip->csound = csound;
   ip->m_chnbp = (MCHNBLK*) NULL;
   ip->instr = tp;
-  /* IV - Oct 26 2002: replaced with faster version (no search) */
-  ip->prvinstance = tp->lst_instance;
-  if (tp->lst_instance)
-    tp->lst_instance->nxtinstance = ip;
-  else
-    tp->instance = ip;
-  tp->lst_instance = ip;
-  /* link into free instance chain */
-  ip->nxtact = tp->act_instance;
-  tp->act_instance = ip;
-  ip->insno = insno;
-  csoundDebugMsg(csound,"instance(): tp->act_instance = %p\n",
-                  tp->act_instance);
-
+  if (link)
+    ip->insno = insno;
 
   if (insno > csound->engineState.maxinsno) {
-    //      size_t pcnt = (size_t) tp->opcode_info->perf_incnt;
-    //      pcnt += (size_t) tp->opcode_info->perf_outcnt;
     OPCODINFO* info = tp->opcode_info;
     size_t pcnt = sizeof(OPCOD_IOBUFS) +
-      sizeof(MYFLT*) * (info->inchns + info->outchns);
+      sizeof(cs_float*) * (info->inchns + info->outchns);
     ip->opcod_iobufs = (void*) csound->Malloc(csound, pcnt);
   }
 
   /* gbloffbas = csound->globalVarPool; */
   lcloffbas = (CS_VAR_MEM*)&ip->p0;
-  lclbas = (MYFLT*) ((char*) ip + pextent);   /* split local space */
-  initializeVarPool((void *)csound, lclbas, tp->varPool);
+  lclbas = (cs_float*) ((char*) ip + pextent);   /* split local space */
+  csoundInitializeVarPool((void *)csound, lclbas, tp->varPool);
 
   opMemStart = nxtopds = (char*) lclbas + tp->varPool->poolSize +
     (tp->varPool->varCount * CS_FLOAT_ALIGN(CS_VAR_TYPE_OFFSET));
@@ -2432,19 +2794,25 @@ static void instance(CSOUND *csound, int insno)
                     Str("instr %d allocated at %p\n\tlclbas %p, opds %p\n"),
                     insno, ip, lclbas, nxtopds);
   optxt = (OPTXT*) tp;
-  prvids = prvpds = (OPDS*) ip;
+  prvids = prvpds = prvpdd = (OPDS*) ip;
   //    prvids->insdshead = ip;
 
   /* initialize vars for CS_TYPE */
   for (current = tp->varPool->head; current != NULL; current = current->next) {
     char* ptr = (char*)(lclbas + current->memBlockIndex);
-    CS_TYPE** typePtr = (CS_TYPE**)(ptr - CS_VAR_TYPE_OFFSET);
+    const CS_TYPE** typePtr = (const CS_TYPE**)(ptr - CS_VAR_TYPE_OFFSET);
     *typePtr = current->varType;
   }
 
   while ((optxt = optxt->nxtop) != NULL) {    /* for each op in instr */
     TEXT *ttp = &optxt->t;
     ep = ttp->oentry;
+    /* Robustness: skip unresolved nodes (no opcode entry) */
+    if (UNLIKELY(ep == NULL || ep->opname == NULL)) {
+      if (UNLIKELY(odebug))
+        csound->Message(csound, Str("instantiate: skipping node with NULL oentry (line=%d)\n"), ttp->linenum);
+      continue;
+    }
     opds = (OPDS*) nxtopds;                   /*   take reqd opds */
     nxtopds += ep->dsblksiz;
     if (UNLIKELY(strcmp(ep->opname, "endin") == 0         /*  (until ENDIN)  */
@@ -2452,306 +2820,305 @@ static void instance(CSOUND *csound, int insno)
       break;
 
     if (UNLIKELY(strcmp(ep->opname, "pset") == 0)) {
-      ip->p1.value = (MYFLT) insno;
+      ip->p1.value = (cs_float) insno;
       continue;
     }
+
     if (UNLIKELY(odebug))
-      csound->Message(csound, Str("op (%s) allocated at %p\n"),
-                      ep->opname, opds);
+      csound->Message(csound, Str("op (%s) allocated at %p for instr %d nxt %p\n"),
+                      ep->opname, opds, insno, nxtopds);
+    /* Initialize OPDS linkage and function pointers to safe defaults */
+    opds->nxti = NULL;
+    opds->nxtp = NULL;
+    opds->nxtd = NULL;
+    opds->init = NULL;
+    opds->perf = NULL;
+    opds->deinit = NULL;
+
     opds->optext = optxt;                     /* set common headata */
     opds->insdshead = ip;
     if (strcmp(ep->opname, "$label") == 0) {     /* LABEL:       */
       LBLBLK  *lblbp = (LBLBLK *) opds;
       lblbp->prvi = prvids;                   /*    save i/p links */
       lblbp->prvp = prvpds;
+      lblbp->prvd = prvpdd;
       continue;                               /*    for later refs */
     }
-    // ******** This needs revisipn with no distinction between k- and a- rate ****
-    if ((ep->thread & 03) == 0) {             /* thread 1 OR 2:  */
-      if (ttp->pftype == 'b') {
-        prvids = prvids->nxti = opds;
-        opds->iopadr = ep->iopadr;
-      }
-      else {
-        prvpds = prvpds->nxtp = opds;
-        opds->opadr = ep->kopadr;
-      }
-      goto args;
-    }
-    if ((ep->thread & 01) != 0) {             /* thread 1:        */
-      prvids = prvids->nxti = opds;           /* link into ichain */
-      opds->iopadr = ep->iopadr;              /*   & set exec adr */
-      if (UNLIKELY(opds->iopadr == NULL))
-        csoundDie(csound, Str("null iopadr"));
-    }
-    if ((n = ep->thread & 02) != 0) {         /* thread 2     :   */
-      prvpds = prvpds->nxtp = opds;           /* link into pchain */
-      /* if (!(n & 04) || */
-      /*     ((ttp->pftype == 'k' || ttp->pftype == 'c') && ep->kopadr != NULL)) */
-        opds->opadr = ep->kopadr;             /*      krate or    */
-      /* else opds->opadr = ep->aopadr;          /\*      arate       *\/ */
+
+    if (ep->init != NULL) {  /* init */
+      prvids = prvids->nxti = opds; /* link into ichain */
+      opds->init = ep->init; /*   & set exec adr */
       if (UNLIKELY(odebug))
-        csound->Message(csound, "opadr = %p\n", (void*) opds->opadr);
-      if (UNLIKELY(opds->opadr == NULL))
-        csoundDie(csound, Str("null opadr"));
+        csound->Message(csound, "%s init = %p\n",
+                        ep->opname,(void*) opds->init);
     }
-  args:
-    if (ep->useropinfo == NULL)
-      argpp = (MYFLT **) ((char *) opds + sizeof(OPDS));
-    else          /* user defined opcodes are a special case */
-      argpp = &(((UOPCODE *) ((char *) opds))->ar[0]);
-
-    arg = ttp->outArgs;
-    for (n = 0; arg != NULL; n++) {
-      MYFLT *fltp;
-      CS_VARIABLE* var = (CS_VARIABLE*)arg->argPtr;
-      if (arg->type == ARG_GLOBAL) {
-        fltp = &(var->memBlock->value); /* gbloffbas + var->memBlockIndex; */
-      }
-      else if (arg->type == ARG_LOCAL) {
-        fltp = lclbas + var->memBlockIndex;
-      }
-      else if (arg->type == ARG_PFIELD) {
-        CS_VAR_MEM* pfield = lcloffbas + arg->index;
-        fltp = &(pfield->value);
-      }
-      else {
-        csound->Message(csound, Str("FIXME: Unhandled out-arg type: %d\n"),
-                        arg->type);
-        fltp = NULL;
-      }
-      argpp[n] = fltp;
-      arg = arg->next;
+    if (ep->perf != NULL) {  /* perf */
+      prvpds = prvpds->nxtp = opds; /* link into pchain */
+      opds->perf = ep->perf;  /*     perf   */
+      if (UNLIKELY(odebug))
+        csound->Message(csound, "%s perf = %p\n",
+                        ep->opname,(void*) opds->perf);
+    }
+    if(ep->deinit != NULL) {  /* deinit */
+      prvpdd = prvpdd->nxtd = opds; /* link into dchain */
+      opds->deinit = ep->deinit;  /*   deinit   */
+      if (UNLIKELY(odebug))
+        csound->Message(csound, "%s deinit = %p\n",
+                        ep->opname,(void*) opds->deinit);
     }
 
-    for (argStringCount = argsRequired(ep->outypes);
-         n < argStringCount;
-         n++)  /* if more outypes, pad */
-      argpp[n] = NULL;
+    /* Set up argument pointers for this opcode */
+    setup_opcode_argpp(csound, opds, ttp, ep, ip, tp, lclbas, lcloffbas, opMemStart);
 
-    arg = ttp->inArgs;
-    ip->lclbas = lclbas;
-    for (; arg != NULL; n++, arg = arg->next) {
-      CS_VARIABLE* var = (CS_VARIABLE*)(arg->argPtr);
-      if (arg->type == ARG_CONSTANT) {
-        CS_VAR_MEM *varMem = (CS_VAR_MEM*)arg->argPtr;
-        argpp[n] = &varMem->value;
-      }
-      else if (arg->type == ARG_STRING) {
-        argpp[n] = (MYFLT*)(arg->argPtr);
-      }
-      else if (arg->type == ARG_PFIELD) {
-        CS_VAR_MEM* pfield = lcloffbas + arg->index;
-        argpp[n] = &(pfield->value);
-      }
-      else if (arg->type == ARG_GLOBAL) {
-        argpp[n] =  &(var->memBlock->value); /*gbloffbas + var->memBlockIndex; */
-      }
-      else if (arg->type == ARG_LOCAL){
-        argpp[n] = lclbas + var->memBlockIndex;
-      }
-      else if (arg->type == ARG_LABEL) {
-        argpp[n] = (MYFLT*)(opMemStart +
-                            findLabelMemOffset(csound, tp, (char*)arg->argPtr));
-      }
-      else {
-        csound->Message(csound, Str("FIXME: instance unexpected arg: %d\n"),
-                        arg->type);
+  }
+  /* display instantiated instrument */
+  if(csoundGetDebug(csound) & DEBUG_RUNTIME ||
+     csoundGetDebug(csound) & DEBUG_INSTR) {
+    csoundMessage(csound, "instantiated instr %d\n", ip->insno);
+    optxt = (OPTXT*) tp;
+    while ((optxt = optxt->nxtop) != NULL) {
+      if(strcmp(optxt->t.opcod, "endin") &&
+         strcmp(optxt->t.opcod, "endop")) {
+         csound->Message(csound, " ");
+         print_opcall(csound, &(optxt->t));
       }
     }
 
+    csoundMessage(csound, "endin (instr %d)\n", ip->insno);
   }
 
-  /* VL 13-12-13: point the memory to the local ksmps & kr variables,
-     and initialise them */
-  CS_VARIABLE* var = csoundFindVariableWithName(csound,
-                                                ip->instr->varPool, "ksmps");
-  if (var) {
-    char* temp = (char*)(lclbas + var->memBlockIndex);
-    var->memBlock = (CS_VAR_MEM*)(temp - CS_VAR_TYPE_OFFSET);
-    var->memBlock->value = csound->ksmps;
-  }
-  var = csoundFindVariableWithName(csound, ip->instr->varPool, "kr");
-  if (var) {
-    char* temp = (char*)(lclbas + var->memBlockIndex);
-    var->memBlock = (CS_VAR_MEM*)(temp - CS_VAR_TYPE_OFFSET);
-    var->memBlock->value = csound->ekr;
-  }
+  initialize_instance_reserved_variables(csound, ip, lclbas);
+
 
   if (UNLIKELY(nxtopds > opdslim))
     csoundDie(csound, Str("inconsistent opds total"));
 
+  if (link) {
+    /* Publish only after the instance and its opcode graph are complete. */
+    inactive_instance_lock(csound);
+    ip->prvinstance = tp->lst_instance;
+    if (tp->lst_instance != NULL)
+      tp->lst_instance->nxtinstance = ip;
+    else
+      tp->instance = ip;
+    tp->lst_instance = ip;
+    ip->nxtact = tp->act_instance;
+    tp->act_instance = ip;
+    ip->linked = 1;
+    inactive_instance_unlock(csound);
+    if (csoundGetDebug(csound) & DEBUG_RUNTIME)
+      csoundMessage(csound, "instance(): tp->act_instance = %p\n",
+                    tp->act_instance);
+  }
+
+  return ip;
 }
 
-int prealloc_(CSOUND *csound, AOP *p, int instname)
+INSDS *instance(CSOUND *csound, int32_t insno) {
+  return instantiate(csound, insno, 1);
+}
+
+/**
+ * check for mismatching context
+ */
+int32_t instr_context_check(CSOUND *csound, INSDS *ip, INSDS *insdshead) {
+  // different SR always fails check
+  if(ip->esr != insdshead->esr) return NOTOK;
+  // otherwise there is no context incompatibility
+  return OK;
+}
+
+/** create instance
+    - allocates a new instance
+    - does not add instance to activ chain or instr act_instance
+
+    Returns the instance pointer, uninitialised
+    NB: should only be called at i-time
+*/
+INSDS *create_instance(CSOUND *csound, int32_t insno)
 {
-    int     n, a;
+  INSDS     *ip;
 
-    if (instname)
-      n = (int) strarg2opcno(csound, ((STRINGDAT*)p->r)->data, 1,
-                             (*p->b == FL(0.0) ? 0 : 1));
-    else {
-      if (csound->ISSTRCOD(*p->r))
-        n = (int) strarg2opcno(csound, get_arg_string(csound,*p->r), 1,
-                               (*p->b == FL(0.0) ? 0 : 1));
-      else n = *p->r;
-    }
+  // create instance but don't link into act_instance chain
+  ip = instantiate(csound, insno, 0);
+  if(ip != NULL) {
+    ip->init_done = 0;
+    ip->insno = (int16_t) insno;
+    ip->esr = csound->esr;
+    ip->pidsr = csound->pidsr;
+    ip->sicvt = csound->sicvt;
+    ip->onedsr = csound->onedsr;
+    ip->ksmps = csound->ksmps;
+    ip->ekr = csound->ekr;
+    ip->kcounter = csound->kcounter;
+    ip->onedksmps = csound->onedksmps;
+    ip->onedkr = csound->onedkr;
+    ip->kicvt = csound->kicvt;
+    ip->pds = NULL;
+    ip->tieflag = 0;
+    ip->actflg = 0;
+    ip->offbet = -1.0;
+    ip->offtim = -1.0;
+    ip->m_chnbp = (MCHNBLK*) NULL;
+    ip->xtratim = 0;
+    ip->relesing = 0;
+    ip->m_sust = 0;
+    ip->nxtolap = NULL;
+    ip->opcod_iobufs = NULL;
+    ip->ksmps_offset = 0;
+    ip->ksmps_no_end = 0;
+    ip->no_end = 0;
+    ip->linked = 0;
+    ip->nxtoff = ip->nxtact = ip->prvact = NULL; /* NOT in act chain */
 
-    if (UNLIKELY(n == NOT_AN_INSTRUMENT)) return NOTOK;
-    if (csound->oparms->realtime)
-      csoundSpinLock(&csound->alloc_spinlock);
-    a = (int) *p->a - csound->engineState.instrtxtp[n]->active;
-    for ( ; a > 0; a--)
-      instance(csound, n);
-    if (csound->oparms->realtime)
-      csoundSpinUnLock(&csound->alloc_spinlock);
-    return OK;
-}
 
-int prealloc(CSOUND *csound, AOP *p){
-  return prealloc_(csound,p,0);
-}
-
-int prealloc_S(CSOUND *csound, AOP *p){
-  return prealloc_(csound,p,1);
-}
-
-int delete_instr(CSOUND *csound, DELETEIN *p)
-{
-  int       n;
-  INSTRTXT  *ip;
-  INSDS     *active;
-  INSTRTXT  *txtp;
-
-  if (IS_STR_ARG(p->insno))
-    n = csound->strarg2insno(csound, ((STRINGDAT *)p->insno)->data, 1);
-  else
-    n = (int) (*p->insno + FL(0.5));
-
-  if (UNLIKELY(n == NOT_AN_INSTRUMENT ||
-               n > csound->engineState.maxinsno ||
-               csound->engineState.instrtxtp[n] == NULL))
-    return OK;                /* Instrument does not exist so noop */
-  ip = csound->engineState.instrtxtp[n];
-  active = ip->instance;
-  while (active != NULL) {    /* Check there are no active instances */
-    INSDS   *nxt = active->nxtinstance;
-    if (UNLIKELY(active->actflg)) { /* Can only remove non-active instruments */
-      char *name = csound->engineState.instrtxtp[n]->insname;
-      if (name)
-        return csound->InitError(csound,
-                                 Str("Instrument %s is still active"), name);
+    csound->instance_count++;
+    ip->instance_id = csound->instance_count;
+    const OPARMS* O = csound->GetOParms(csound);
+    if (UNLIKELY(O->msglevel & CS_RNGEMSG)) {
+      char *name = csound->engineState.instrtxtp[ip->insno]->insname;
+      if (UNLIKELY(name))
+        csound->ErrorMsg(csound,
+                         Str("new free alloc for instr %s:\n"), name);
       else
-        return csound->InitError(csound,
-                                 Str("Instrument %d is still active"), n);
-    }
-#if 0
-    if (active->opcod_iobufs && active->insno > csound->engineState.maxinsno)
-      csound->Free(csound, active->opcod_iobufs);        /* IV - Nov 10 2002 */
-#endif
-    if (active->fdchp != NULL)
-      fdchclose(csound, active);
-    if (active->auxchp != NULL)
-      auxchfree(csound, active);
-    free_instr_var_memory(csound, active);
-    csound->Free(csound, active);
-    active = nxt;
-  }
-  csound->engineState.instrtxtp[n] = NULL;
-  /* Now patch it out */
-  for (txtp = &(csound->engineState.instxtanchor);
-       txtp != NULL;
-       txtp = txtp->nxtinstxt)
-    if (txtp->nxtinstxt == ip) {
-      OPTXT *t = ip->nxtop;
-      txtp->nxtinstxt = ip->nxtinstxt;
-      while (t) {
-        OPTXT *s = t->nxtop;
-        csound->Free(csound, t);
-        t = s;
-      }
-      csound->Free(csound, ip);
-      return OK;
-    }
-  return NOTOK;
-}
-
-
-void killInstance_enqueue(CSOUND *csound, MYFLT instr, int insno,
-                          INSDS *ip, int mode,
-                          int allow_release);
-
-void killInstance(CSOUND *csound, MYFLT instr, int insno, INSDS *ip,
-                  int mode, int allow_release) {
-  INSDS *ip2 = NULL, *nip;
-  do {                        /* This loop does not terminate in mode=0 */
-    nip = ip->nxtact;
-    if (((mode & 8) && ip->offtim >= 0.0) ||
-        ((mode & 4) && ip->p1.value != instr) ||
-        (allow_release && ip->relesing)) {
-      ip = nip;
-      continue;
-    }
-    if (!(mode & 3)) {
-      if (allow_release) {
-        xturnoff(csound, ip);
-      }
-      else {
-        nip = ip->nxtact;
-        xturnoff_now(csound, ip);
-      }
-    }
-    else {
-      ip2 = ip;
-      if ((mode & 3) == 1)
-        break;
-    }
-    ip = nip;
-  } while (ip != NULL && (int) ip->insno == insno);
-
-  if (ip2 != NULL) {
-    if (allow_release) {
-      xturnoff(csound, ip2);
-    }
-    else {
-      xturnoff_now(csound, ip2);
+        csound->ErrorMsg(csound,
+                         Str("new free alloc for instr %d:\n"), ip->insno);
     }
   }
+  return ip;
 }
 
-int csoundKillInstanceInternal(CSOUND *csound, MYFLT instr, char *instrName,
-                               int mode, int allow_release, int async)
+/** Free instance memory
+    - Instances linked to the instr act_instance chain
+    are not freed, since these instances are freed by
+    free_inactive_instances()
+    - Unlinked instances are freed.
+    All active instances are turned off.
+*/
+static void free_unlinked_instance(CSOUND *csound, INSDS *ip)
 {
-  INSDS *ip;
-  int   insno;
+  /* The pending-turnoff handoff polls readers before reaching this function.
+     Never wait here: delete can run while its caller owns an engine lock. */
+  if (UNLIKELY(instance_has_async_refs(ip)))
+    return;
 
-  if (instrName) {
-    instr = named_instr_find(csound, instrName);
-    insno = (int) instr;
-  } else insno = instr;
+  // deactivate any opcodes
+  // NB: memory for these is freed elsewhere (free_inactive_instances)
+  // as opcodes exist in the instr act_instance chain
+  if (ip->opcod_deact) {
+    UOPCODE *p = (UOPCODE*) ip->opcod_deact;
+    free_user_opcode_converters(csound, p);
 
-  if (UNLIKELY(insno < 1 || insno > (int) csound->engineState.maxinsno ||
-               csound->engineState.instrtxtp[insno] == NULL)) {
-    return CSOUND_ERROR;
+    deact(csound, p->ip);     /* deactivate */
+    p->ip = NULL;
+    p->h.perf = (SUBR) useropcd;
+    ip->opcod_deact = NULL;
+  }
+  // same for any subinstrs - these behave like UDOS
+  if (ip->subins_deact) {
+    deact(csound, ((SUBINST*) ip->subins_deact)->ip);
+    ((SUBINST*) ip->subins_deact)->ip = NULL;
+    ip->subins_deact = NULL;
+  }
+  // now we deal with memory created for this ip
+  if (ip->fdchp != NULL)
+    fdchclose(csound, ip);
+  if (ip->auxchp != NULL)
+    auxchfree(csound, ip);
+  free_instr_var_memory(csound, ip);
+  const OPARMS* O = csound->GetOParms(csound);
+  if (UNLIKELY(O->msglevel & CS_RNGEMSG)) {
+    char *name = csound->engineState.instrtxtp[ip->insno]->insname;
+    if (UNLIKELY(name))
+      csound->ErrorMsg(csound, Str("instance %llu (instr %s) deleted\n"),
+                       (unsigned long long) ip->instance_id, name);
+    else
+      csound->ErrorMsg(csound, Str("instance %llu (instr %d) deleted\n"),
+                       (unsigned long long) ip->instance_id, ip->insno);
+  }
+  free_instance_variables(csound, ip);
+  csound->Free(csound, ip);
+}
+
+void free_instance(CSOUND *csound, INSDS *ip) {
+  // don't touch any instances that are in the act_instance chain
+  if(ip->linked) {
+    /* Every active-chain node has a non-null predecessor; the head points to
+       actanchor. Free-list nodes clear prvact, so do not reactivate those. */
+    if (ATOMIC_GET8(ip->actflg) == 0 && ip->prvact != NULL)
+      ATOMIC_SET8(ip->actflg, 1);
+    xturnoff_now(csound, ip);
+    return;
   }
 
-  if (UNLIKELY(mode < 0 || mode > 15 || (mode & 3) == 3)) {
-    csoundUnlockMutex(csound->API_lock);
-    return CSOUND_ERROR;
-  }
-  ip = &(csound->actanchor);
+  /* Unlinked deletion always uses the non-blocking handoff. This covers both
+     queued initialization and a live asynchronous reader without sleeping on
+     the performance thread or while an engine lock is held. */
+  async_instance_lock(csound);
+  ATOMIC_SET(ip->free_pending, 1);
+  async_instance_unlock(csound);
+  instance_init_request_turnoff(csound, ip);
+}
 
-  while ((ip = ip->nxtact) != NULL && (int) ip->insno != insno);
-  if (UNLIKELY(ip == NULL)) {
-    return CSOUND_ERROR;
+/** Initialise an instance
+    - copy data from evt pfields
+    - run init pass
+    returns CSOUND_SUCCESS or an error code
+*/
+int32_t init_instance(CSOUND *csound, INSDS *ip,
+                      EVTBLK *newevtp){
+  EVTBLK *initevt = csound->init_event;
+  INSTRTXT *tp = csound->engineState.instrtxtp[ip->insno];
+  CS_VAR_MEM *pfields = NULL;
+  int32_t   i, n, error = CSOUND_SUCCESS;
+  INSTANCE_INIT_RESULT initResult;
+  cs_float  *fep;
+  pfields = (CS_VAR_MEM*) &ip->p0;
+  /* init: */
+  if (tp->psetdata) {
+    cs_float *pdat = tp->psetdata + 2;
+    int32 nn = tp->pmax - 2; /*   put cur vals in pflds */
+    for (i = 0; i < nn; i++) {
+      CS_VAR_MEM* pfield = (pfields + i + 3);
+      pfield->value = *(pdat + i);
+    }
   }
 
-  if (!async) {
-    csoundLockMutex(csound->API_lock);
-    killInstance(csound, instr, insno, ip, mode, allow_release);
-    csoundUnlockMutex(csound->API_lock);
+  fep = &newevtp->p[0];
+  n = newevtp->pcnt;
+  for (i = 1; i < n + 1; i++) {
+    CS_VAR_MEM* pfield = pfields + i;
+    pfield->varType = &CS_VAR_TYPE_P;
+    pfield->value = fep[i];
   }
-  else
-    killInstance_enqueue(csound, instr, insno, ip, mode, allow_release);
-  return CSOUND_SUCCESS;
+  if (n < tp->pmax && tp->psetdata==NULL) {
+    for (i = 0; i < tp->pmax - n; i++) {
+      CS_VAR_MEM* pfield = pfields + i + n + 1;
+      pfield->varType = &CS_VAR_TYPE_P;
+      pfield->value = 0;
+    }
+  }
+
+  csound->inerrcnt = 0;
+  ip->strarg = newevtp->strarg;
+  csound->init_event = newevtp;
+  if (UNLIKELY(instance_init_begin(csound, ip) != CSOUND_SUCCESS)) {
+    csound->init_event = initevt;
+    return csound->InitError(csound,
+                             Str("cannot initialize instrument %d while "
+                                 "it is being turned off"), ip->insno);
+  }
+  error = init_pass(csound, ip);
+  initResult = instance_init_finish(csound, ip);
+  if (initResult == INSTANCE_INIT_COMPLETE && error == 0) {
+    ATOMIC_SET(ip->init_done, 1);
+    ip->actflg = 1;  // set as active
+  }
+  else {
+    ATOMIC_SET(ip->init_done, 0);
+  }
+  if (initResult == INSTANCE_INIT_COMPLETE && error != 0)
+    ip->actflg = 0;  // set as inactive
+  csound->init_event = initevt;
+  return error;
 }

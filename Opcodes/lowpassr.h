@@ -17,29 +17,32 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
+
+#pragma once
 
 typedef struct {
         OPDS    h;
-        MYFLT   *ar, *asig, *kfco, *kres, *istor;
-        double  ynm1, ynm2;
-        double  coef1, coef2, okf, okr, k;
+        cs_float   *ar, *asig, *kfco, *kres, *istor;
+        cs_double  ynm1, ynm2;
+        cs_double  coef1, coef2, okf, okr, k;
 } LOWPR;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *ar, *asig, *kfco, *kres, *ord, *istor;
-        MYFLT   ynm1[10], ynm2[10] ;
+        cs_float   *ar, *asig, *kfco, *kres, *ord, *istor;
+        cs_double  ynm1[10], ynm2[10];
         int32_t     loop;
-        MYFLT   coef1, coef2, okf, okr, k;
+        cs_double  coef1, coef2, k;
+        cs_float   okf, okr;
 } LOWPRX;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *ar, *asig, *kfco, *kres, *ord, *sep;
-        MYFLT   ynm1[10], ynm2[10], cut[10];
+        cs_float   *ar, *asig, *kfco, *kres, *ord, *sep;
+        cs_double  ynm1[10], ynm2[10];
+        cs_float   cut[10];
         int32_t
         loop;
 } LOWPR_SEP;

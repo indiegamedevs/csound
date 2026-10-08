@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef MIDIINTEROP_H
@@ -132,61 +131,61 @@ Author: Michael Gogins
 typedef struct MIDINOTEON_
 {
         OPDS h;
-        MYFLT *xkey;
-        MYFLT *xvelocity;
+        cs_float *xkey;
+        cs_float *xvelocity;
 }
 MIDINOTEON;
 
 typedef struct MIDIPOLYAFTERTOUCH_
 {
         OPDS h;
-        MYFLT *xpolyaftertouch;
-        MYFLT *xcontroller;
-        MYFLT *olow;
-        MYFLT *hhigh;
+        cs_float *xpolyaftertouch;
+        cs_float *xcontroller;
+        cs_float *olow;
+        cs_float *hhigh;
 }
 MIDIPOLYAFTERTOUCH;
 
 typedef struct MIDICONTROLCHANGE_
 {
         OPDS h;
-        MYFLT *xcontroller;
-        MYFLT *xcontrollervalue;
-        MYFLT *olow;
-        MYFLT *hhigh;
+        cs_float *xcontroller;
+        cs_float *xcontrollervalue;
+        cs_float *olow;
+        cs_float *hhigh;
 }
 MIDICONTROLCHANGE;
 
 typedef struct MIDIPROGRAMCHANGE_
 {
         OPDS h;
-        MYFLT *xprogram;
+        cs_float *xprogram;
 }
 MIDIPROGRAMCHANGE;
 
 typedef struct MIDICHANNELAFTERTOUCH_
 {
         OPDS h;
-        MYFLT *xchannelaftertouch;
-        MYFLT *olow;
-        MYFLT *hhigh;
+        cs_float *xchannelaftertouch;
+        cs_float *olow;
+        cs_float *hhigh;
 }
 MIDICHANNELAFTERTOUCH;
 
 typedef struct MIDIPITCHBEND_
 {
         OPDS h;
-        MYFLT *xpitchbend;
-        MYFLT *olow;
-        MYFLT *hhigh;
+        cs_float *xpitchbend;
+        cs_float *olow;
+        cs_float *hhigh;
 }
 MIDIPITCHBEND;
 
 typedef struct MIDIDEFAULT_
 {
         OPDS h;
-        MYFLT *xdefault;
-        MYFLT *xvalue;
+        cs_float *xdefault;
+        cs_float *xvalue;
 }
 MIDIDEFAULT;
 

@@ -14,7 +14,7 @@
  *
  *  You should have received a copy of the GNU Lesser General Public
  *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ *  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
  */
 
 /* $Id: layer2.c,v 1.2 2009/03/01 15:27:05 jpff Exp $ */
@@ -24,8 +24,8 @@
 extern const uint32_t bitmask[17];
 extern alloc_table_t *alloc_tables[5];
 
-extern unsigned mpa_getbits(mpadec_t mpadec, int n);
-extern uint16_t update_crc(uint16_t init, uint8_t *buf, int length);
+extern unsigned mpa_getbits(mpadec_t mpadec, int32_t n);
+extern uint16_t update_crc(uint16_t init, uint8_t *buf, int32_t length);
 
 static void II_decode_bitalloc(mpadec_t mpadec, uint8_t *bit_alloc,
                                uint8_t *scalefac)
@@ -101,8 +101,8 @@ static void II_decode_bitalloc(mpadec_t mpadec, uint8_t *bit_alloc,
 }
 
 static void II_decode_samples(mpadec_t mpadec, uint8_t *bit_alloc,
-                              uint8_t *scalefac, MYFLT fraction[2][4][SBLIMIT],
-                              int x1)
+                              uint8_t *scalefac, cs_float fraction[2][4][SBLIMIT],
+                              int32_t x1)
 {
     register struct mpadec_t *mpa = (struct mpadec_t *)mpadec;
     alloc_table_t *alloc = mpa->frame.alloc_table, *alloc2;
@@ -113,16 +113,16 @@ static void II_decode_samples(mpadec_t mpadec, uint8_t *bit_alloc,
     for (i = 0; i < jsbound; i++, alloc += ((int64_t)1) << step) {
       step = alloc->bits;
       for (j = 0; j < (unsigned)mpa->frame.channels; j++) {
-        unsigned b = *ba++; int d;
+        unsigned b = *ba++; int32_t d;
         if (b) {
           alloc2 = alloc + b;
           k = alloc2->bits;
           d = alloc2->d;
           if (d < 0) {
-            register MYFLT cm = mpa->tables.muls[k][scf[x1]];
-            fraction[j][0][i] = ((MYFLT)((int)GETBITS(k) + d))*cm;
-            fraction[j][1][i] = ((MYFLT)((int)GETBITS(k) + d))*cm;
-            fraction[j][2][i] = ((MYFLT)((int)GETBITS(k) + d))*cm;
+            register cs_float cm = mpa->tables.muls[k][scf[x1]];
+            fraction[j][0][i] = ((cs_float)((int32_t)GETBITS(k) + d))*cm;
+            fraction[j][1][i] = ((cs_float)((int32_t)GETBITS(k) + d))*cm;
+            fraction[j][2][i] = ((cs_float)((int32_t)GETBITS(k) + d))*cm;
           } else {
             unsigned idx = GETBITS(k), m = scf[x1];
             uint8_t *tab = (mpa->tables.mp2tables[d] + 3*idx);
@@ -135,7 +135,7 @@ static void II_decode_samples(mpadec_t mpadec, uint8_t *bit_alloc,
       }
     }
     for (i = jsbound; i < sblimit; i++, alloc += ((int64_t)(1) << step)) {
-      unsigned b = ba[1]; int d;
+      unsigned b = ba[1]; int32_t d;
       step = alloc->bits;
       ba += 2;
       if (b) {
@@ -143,10 +143,10 @@ static void II_decode_samples(mpadec_t mpadec, uint8_t *bit_alloc,
         k = alloc2->bits;
         d = alloc2->d;
         if (d < 0) {
-          register MYFLT cm = mpa->tables.muls[k][scf[x1 + 3]];
-          fraction[1][0][i] = fraction[0][0][i] = ((MYFLT)((int)GETBITS(k) + d))*cm;
-          fraction[1][1][i] = fraction[0][1][i] = ((MYFLT)((int)GETBITS(k) + d))*cm;
-          fraction[1][2][i] = fraction[0][2][i] = ((MYFLT)((int)GETBITS(k) + d))*cm;
+          register cs_float cm = mpa->tables.muls[k][scf[x1 + 3]];
+          fraction[1][0][i] = fraction[0][0][i] = ((cs_float)((int32_t)GETBITS(k) + d))*cm;
+          fraction[1][1][i] = fraction[0][1][i] = ((cs_float)((int32_t)GETBITS(k) + d))*cm;
+          fraction[1][2][i] = fraction[0][2][i] = ((cs_float)((int32_t)GETBITS(k) + d))*cm;
           cm = mpa->tables.muls[k][scf[x1]];
           fraction[0][0][i] *= cm;
           fraction[0][1][i] *= cm;
@@ -175,8 +175,8 @@ static void II_decode_samples(mpadec_t mpadec, uint8_t *bit_alloc,
 void decode_layer2(mpadec_t mpadec, uint8_t *buffer)
 {
     register struct mpadec_t *mpa = (struct mpadec_t *)mpadec;
-    int i, j, table, single;
-    MYFLT fraction[2][4][SBLIMIT];
+    int32_t i, j, table, single;
+    cs_float fraction[2][4][SBLIMIT];
     uint8_t bit_alloc[2*SBLIMIT];
     uint8_t scalefac[3*2*SBLIMIT];
     static uint8_t sblimits[5] = { 27 , 30 , 8, 12 , 30 };
@@ -211,7 +211,7 @@ void decode_layer2(mpadec_t mpadec, uint8_t *buffer)
     for (i = 0; i < SCALE_BLOCK; i++) {
       II_decode_samples(mpa, bit_alloc, scalefac, fraction, i >> 2);
       if (!single) for (j = 0; j < 3; j++) {
-          register int k;
+          register int32_t k;
           for (k = 0; k < SBLIMIT; k++)
             fraction[0][j][k] = 0.5*(fraction[0][j][k] + fraction[1][j][k]);
         }

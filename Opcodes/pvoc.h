@@ -17,15 +17,17 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_PVOC_H
 #define CSOUND_PVOC_H
 
-// #include "csdl.h"
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
+#endif
 #include "interlocks.h"
 
 typedef struct PVOC_GLOBALS_ PVOC_GLOBALS;
@@ -40,9 +42,7 @@ typedef struct PVOC_GLOBALS_ PVOC_GLOBALS;
 
 struct PVOC_GLOBALS_ {
     CSOUND    *csound;
-    MYFLT     *dsputil_sncTab;
-    PVBUFREAD *pvbufreadaddr;
-    TABLESEG  *tbladr;
+    cs_float     *dsputil_sncTab;
 };
 
 extern PVOC_GLOBALS *PVOC_AllocGlobals(CSOUND *csound);

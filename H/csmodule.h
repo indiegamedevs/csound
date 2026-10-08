@@ -18,8 +18,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_CSMODULE_H
@@ -30,45 +29,44 @@
  * ====================                                                       *
  *                                                                            *
  * Plugin libraries are loaded from the directory defined by the environment  *
- * variable OPCODE6DIR (or the current directory if OPCODE6DIR is unset) by   *
+ * variable OPCODE7DIR (or the current directory if OPCODE7DIR is unset) by   *
  * csoundPreCompile() while initialising a Csound instance, and are unloaded  *
  * at the end of performance by csoundReset().                                *
  * A library may export any of the following five interface functions,        *
  * however, the presence of csoundModuleCreate() is required for identifying  *
  * the file as a Csound plugin module.                                        *
  *                                                                            *
- * int csoundModuleCreate(CSOUND *csound)       (required)                    *
+ * int32_t csoundModuleCreate(CSOUND *csound)       (required)                    *
  * --------------------------------------                                     *
  *                                                                            *
  * Pre-initialisation function, called by csoundPreCompile().                 *
  *                                                                            *
- * int csoundModuleInit(CSOUND *csound)         (optional)                    *
+ * int32_t csoundModuleInit(CSOUND *csound)         (optional)                    *
  * ------------------------------------                                       *
  *                                                                            *
  * Called by Csound instances before orchestra translation. One possible use  *
  * of csoundModuleInit() is adding new opcodes with csoundAppendOpcode().     *
  *                                                                            *
- * int csoundModuleDestroy(CSOUND *csound)      (optional)                    *
+ * int32_t csoundModuleDestroy(CSOUND *csound)      (optional)                    *
  * ---------------------------------------                                    *
  *                                                                            *
  * Destructor function for Csound instance 'csound', called at the end of     *
  * performance, after closing audio output.                                   *
  *                                                                            *
- * const char *csoundModuleErrorCodeToString(int errcode)   (optional)        *
+ * const char *csoundModuleErrorCodeToString(int32_t errcode)   (optional)        *
  * ------------------------------------------------------                     *
  *                                                                            *
  * Converts error codes returned by any of the initialisation or destructor   *
  * functions to a string message.                                             *
  *                                                                            *
- * int csoundModuleInfo(void)                   (optional)                    *
+ * int32_t csoundModuleInfo(void)                   (optional)                    *
  * --------------------------                                                 *
  *                                                                            *
- * Returns information that can be used to determine if the plugin was built  *
- * for a compatible version of libcsound. The return value may be the sum of  *
- * any of the following two values:                                           *
- *                                                                            *
- *   ((CS_APIVERSION << 16) + (CS_APISUBVER << 8))      API version           *
- *   (int) sizeof(MYFLT)                                MYFLT type            *
+ * Return CSOUND_MODULE_INFO (from csdl.h) to identify the plugin ABI.         *
+ * Bits 16 and up hold CS_VERSION; bits 8-15 hold CS_SUBVER.                   *
+ * Bits 0-6 hold sizeof(cs_float); bit 7 marks USE_FLOAT (32-bit cs_double).    *
+ * A missing function or unset bit 7 denotes the legacy 64-bit cs_double ABI. *
+ * USE_FLOAT engines reject plugins without that flag before calling them.   *
  *                                                                            *
  ******************************************************************************/
 
@@ -85,7 +83,7 @@ extern "C" {
    * some modules could not be loaded or initialised, and CSOUND_MEMORY
    * if a memory allocation failure has occured.
    */
-  int csoundLoadModules(CSOUND *csound);
+  int32_t csoundLoadModules(CSOUND *csound);
 
   /**
    * Call initialisation functions of all loaded modules that have a
@@ -93,11 +91,14 @@ extern "C" {
    * Return value is CSOUND_SUCCESS if there was no error, and CSOUND_ERROR if
    * some modules could not be initialised.
    */
-  int csoundInitModules(CSOUND *csound);
+  int32_t csoundInitModules(CSOUND *csound);
 
   /** Load and initialise all modules from one directory
    */
-  int csoundLoadAndInitModules(CSOUND *csound, const char *opdir);
+  int32_t csoundLoadAndInitModules(CSOUND *csound, const char *opdir);
+
+  /** Load and initialise --opcode-lib entries through the active host. */
+  int32_t csoundLoadRequestedPlugins(CSOUND *csound);
 
   /**
    * Call destructor functions of all loaded modules that have a
@@ -105,16 +106,15 @@ extern "C" {
    * Return value is CSOUND_SUCCESS if there was no error, and
    * CSOUND_ERROR if some modules could not be de-initialised.
    */
-  int csoundDestroyModules(CSOUND *csound);
+  int32_t csoundDestroyModules(CSOUND *csound);
 
   /**
    * Initialise opcodes not in entry1.c
    */
-  int csoundInitSaticModules(CSOUND *csound);
+  int32_t csoundInitSaticModules(CSOUND *csound);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* CSOUND_CSMODULE_H */
-

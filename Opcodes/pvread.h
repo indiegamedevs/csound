@@ -17,19 +17,20 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*                                                              PVREAD.H    */
 
+#pragma once
+
 typedef struct {
     OPDS    h;
-    MYFLT   *kfreq, *kamp, *ktimpnt,  *ifilno, *ibin;
+    cs_float   *kfreq, *kamp, *ktimpnt,  *ifilno, *ibin, *ifiletime;
     int32   kcnt;
     int32   baseFr, maxFr, frSiz, prFlg;
     /* base Frame (in frameData0) and maximum frame on file, ptr to fr, size */
-    MYFLT   frPrtim, asr;
+    cs_float   frPrtim, asr;
     float   *frPtr;
     int32   mybin;
 } PVREAD;

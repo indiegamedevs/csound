@@ -17,23 +17,23 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
                         /*                              SPECTRA.H       */
 #ifndef __SPECTRA_H
 #define __SPECTRA_H
 
 #define MAXFRQS 120
+#include "uggab.h"
 
 typedef struct {
         OPDS    h;
         SPECDAT *wsig;
-        MYFLT   *signal,*iprd,*iocts,*ifrqs,*iq,*ihann;
-        MYFLT   *idbout,*idisprd,*idsines;
+        cs_float   *signal,*iprd,*iocts,*ifrqs,*iq,*ihann;
+        cs_float   *idbout,*idisprd,*idsines;
         int32_t     nfreqs, hanning, ncoefs, dbout, nsmps, scountdown;
         uint32_t timcount;
-        MYFLT   curq, *sinp, *cosp, *linbufp;
+        cs_float   curq, *sinp, *cosp, *linbufp;
         int32_t     disprd, dcountdown, winlen[MAXFRQS], offset[MAXFRQS];
         DOWNDAT downsig;
         WINDAT  sinwindow, octwindow;
@@ -45,9 +45,9 @@ typedef struct {
         OPDS    h;
         SPECDAT *wsig;
         DOWNDAT *dsig;
-        MYFLT   *iprd, *ifrqs, *iq, *ihann, *idbout, *idsines;
+        cs_float   *iprd, *ifrqs, *iq, *ihann, *idbout, *idsines;
         int32_t     nfreqs, hanning, ncoefs, dbout;
-        MYFLT   curq, *sinp, *cosp, *linbufp;
+        cs_float   curq, *sinp, *cosp, *linbufp;
         int32_t     countdown, timcount, winlen[MAXFRQS];
         WINDAT  dwindow;
         AUXCH   auxch;
@@ -57,7 +57,7 @@ typedef struct {
 typedef struct {
         OPDS    h;
         SPECDAT *wsig;
-        MYFLT   *iprd, *iwtflg;
+        cs_float   *iprd, *iwtflg;
         int32_t     countdown, timcount;
         WINDAT  dwindow;
 } SPECDISP;
@@ -66,13 +66,13 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *koct, *kamp;
+        cs_float   *koct, *kamp;
         SPECDAT *wsig;
-        MYFLT   *kvar, *ilo, *ihi, *istrt, *idbthresh, *inptls, *irolloff;
-        MYFLT   *iodd, *iconf, *interp, *ifprd, *iwtflg;
+        cs_float   *kvar, *ilo, *ihi, *istrt, *idbthresh, *inptls, *irolloff;
+        cs_float   *iodd, *iconf, *interp, *ifprd, *iwtflg;
         int32_t     pdist[MAXPTL], nptls, rolloff, kinterp, ftimcnt;
-        MYFLT   pmult[MAXPTL], confact, kvalsav, kval, kavl, kinc, kanc;
-        MYFLT   *flop, *fhip, *fundp, *oct0p, threshon, threshoff;
+        cs_float   pmult[MAXPTL], confact, kvalsav, kval, kavl, kinc, kanc;
+        cs_float   *flop, *fhip, *fundp, *oct0p, threshon, threshoff;
         int32_t     winpts, jmpcount, playing;
         SPECDAT wfund;
         SPECDISP fdisplay;
@@ -80,19 +80,19 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *ksum;
+        cs_float   *ksum;
         SPECDAT *wsig;
-        MYFLT   *interp;
+        cs_float   *interp;
         int32_t     kinterp;
-        MYFLT   kval, kinc;
+        cs_float   kval, kinc;
 } SPECSUM;
 
 typedef struct {
         OPDS    h;
         SPECDAT *waddm;
         SPECDAT *wsig1, *wsig2;
-        MYFLT   *imul2;
-        MYFLT   mul2;
+        cs_float   *imul2;
+        cs_float   mul2;
 } SPECADDM;
 
 typedef struct {
@@ -106,9 +106,9 @@ typedef struct {
         OPDS    h;
         SPECDAT *wscaled;
         SPECDAT *wsig;
-        MYFLT   *ifscale, *ifthresh;
+        cs_float   *ifscale, *ifthresh;
         int32_t     thresh;
-        MYFLT   *fscale, *fthresh;
+        cs_float   *fscale, *fthresh;
         AUXCH   auxch;
 } SPECSCAL;
 
@@ -123,13 +123,273 @@ typedef struct {
         OPDS    h;
         SPECDAT *wfil;
         SPECDAT *wsig;
-        MYFLT   *ifhtim;
-        MYFLT   *coefs, *states;
+        cs_float   *ifhtim;
+        cs_float   *coefs, *states;
         AUXCH   auxch;
 } SPECFILT;
 
+#define MAXPTL 10
+typedef struct {
+        OPDS    h;
+        cs_float   *koct, *kamp;
+        cs_float   *asig;
+        cs_float   *iprd, *ilo, *ihi, *idbthresh;
+                                /* Optional */
+        cs_float   *ifrqs, *iconf, *istrt, *iocts, *iq, *inptls, *irolloff, *istor;
+        cs_double  c1, c2, prvq;
+#define MAXFRQS 120
+        SPECDAT wsig;
+        int32_t     nfreqs, ncoefs, dbout, scountdown, timcount;
+        cs_float   curq, *sinp, *cosp, *linbufp;
+        int32_t     winlen[MAXFRQS], offset[MAXFRQS];
+        DOWNDAT downsig;
+        WINDAT  sinwindow, octwindow;
+        AUXCH   auxch1, auxch2;
+        int32_t     pdist[MAXPTL], nptls, rolloff;
+        cs_float   pmult[MAXPTL], confact, kvalsav, kval, kavl, kinc, kanc;
+        cs_float   *fundp, threshon, threshoff;
+        int32_t basebin, lowbin, highbin;
+        int32_t     winpts, jmpcount, playing;
+        SPECDAT wfund;
+} PITCH;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *cnt;
+        void    *clk;
+        int32_t     c;
+} CLOCK;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *r;
+        cs_float   *a;
+        void    *clk;
+} CLKRD;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *val;
+        cs_float   *index;
+} SCRATCHPAD;
+
+
+typedef struct {
+    OPDS    h;
+    cs_float   *sr, *kamp, *kcps, *ifn, *ifreqtbl, *iamptbl, *icnt, *iphs;
+    FUNC    *ftp;
+    FUNC    *freqtp;
+    FUNC    *amptp;
+    uint32_t     count;
+    int32_t     inerr;
+    AUXCH   lphs;
+    int32_t floatph;
+} ADSYNT;
+
+typedef struct {
+    OPDS        h;
+    cs_float       *sr, *kamp, *ktona, *kbrite, *ibasef, *ifn;
+    cs_float       *imixtbl, *ioctcnt, *iphs;
+    int32       lphs[10];
+    int32_t         octcnt;
+    cs_float       prevamp;
+    FUNC        *ftp;
+    FUNC        *mixtp;
+} HSBOSC;
+
+typedef struct {
+    OPDS    h;
+    cs_float   *kcps, *krms, *asig, *imincps, *imaxcps, *icps,
+            *imedi, *idowns, *iexcps, *irmsmedi;
+    cs_float   srate;
+    cs_float   lastval;
+    int32   downsamp;
+    int32   upsamp;
+    int32   minperi;
+    int32   maxperi;
+    int32   index;
+    int32   readp;
+    int32   size;
+    int32   peri;
+    int32   medisize;
+    int32   mediptr;
+    int32   rmsmedisize;
+    int32   rmsmediptr;
+    int32_t     inerr;
+    AUXCH   median;
+    AUXCH   rmsmedian;
+    AUXCH   buffer;
+} PITCHAMDF;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *sr, *xcps, *kindx, *icnt, *iphs;
+        AUXCH   curphs;
+        int32_t count;
+} PHSORBNK;
+
+/* pinkish opcode... Two methods for generating pink noise */
+
+/* Gardner method space req */
+#define GRD_MAX_RANDOM_ROWS   (32)
+
+typedef struct {
+    OPDS        h;
+    cs_float       *aout;
+    cs_float       *xin, *imethod, *iparam1, *iseed, *iskip;
+    int32       ampinc;         /* Scale output to range */
+    uint32      randSeed;     /* Used by local random generator */
+                                /* for Paul Kellet's filter bank */
+    cs_double      b0, b1, b2, b3, b4, b5, b6;
+                                /* for Gardner method */
+    int32       grd_Rows[GRD_MAX_RANDOM_ROWS];
+    int32       grd_NumRows;    /* Number of rows (octave bands of noise) */
+    int32       grd_RunningSum; /* Used to optimize summing of generators. */
+    uint32_t    grd_Index;      /* Incremented modulo 2^32 each sample. */
+    uint32_t    grd_IndexMask;  /* Index wrapped by ANDing with this mask. */
+    cs_float       grd_Scalar;     /* Used to scale to normalize generated noise. */
+} PINKISH;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *aout;
+        cs_float   *ain, *imethod, *limit, *iarg;
+        cs_float   arg, lim, k1, k2;
+        int32_t     meth;
+} CLIP;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *ar;
+        cs_float   *amp, *freq, *offset;
+        int64_t      next;       /* -1 means no further impulses */
+} IMPULSE;
+
+typedef struct {
+        int32   cnt,acnt;
+        double  alpha, x;
+        cs_float   nxtpt;
+        double  val, c1;
+} NSEG;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *rslt, *argums[VARGMAX];
+        NSEG    *cursegp;
+        int32   nsegs;
+        int32   segsrem, curcnt;
+        double  curval, curinc, alpha, curx;
+        AUXCH   auxch;
+        int32   xtra;
+        cs_float   finalval, lastalpha;
+} TRANSEG;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *rslt, *kamp, *beta;
+        cs_float   last, lastbeta, sq1mb2, ampmod;
+        int32_t     ampinc;
+} VARI;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *ar, *ain, *fco, *res, *dist, *istor;
+        cs_float   ay1, ay2, aout, lastin;
+} LPF18;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *ar, *ain, *rep, *len;
+        AUXCH   auxch;
+        int32_t     length;         /* Length of buffer */
+        cs_double      cnt;            /* Repetitions of current cycle */
+        int32_t     start;          /* Start of current cycle */
+        int32_t     current;        /* takeout point */
+        int32_t     direction;      /* Need to check direction of crossing */
+        int32_t     end;            /* Insert point */
+        cs_float   lastsamp;       /* So we can test changes */
+        int32_t     noinsert;       /* Flag to say we are losing input */
+} BARRI;
+
+typedef struct {
+        OPDS    h;
+        cs_float   *sr, *xamp, *xcps, *ifn, *iphs;
+        cs_float   lphs;
+        FUNC    *ftp;
+} XOSC;
+
+
+
+typedef struct {
+        OPDS    h;
+        cs_float   *ans;
+        cs_float   *asig;
+        cs_float   *kwind;
+        cs_float   *imaxsize;
+        cs_float   *iskip;
+        AUXCH   b;
+        cs_float   *buff;
+        cs_float   *med;
+        int32_t     ind;
+        int32_t     maxwind;
+} MEDFILT;
+
+
 extern void DOWNset(CSOUND *, DOWNDAT *, int32);
 extern void SPECset(CSOUND *, SPECDAT *, int32);
+int32_t Foscaa(CSOUND *, XOSC *p);
+int32_t Foscak(CSOUND *, XOSC *p);
+int32_t Foscka(CSOUND *, XOSC *p);
+int32_t Fosckk(CSOUND *, XOSC *p);
+int32_t Foscset(CSOUND *, XOSC *p);
+int32_t GardnerPink_init(CSOUND *, PINKISH *p);
+int32_t GardnerPink_perf(CSOUND *, PINKISH *p);
+int32_t adsynt(CSOUND *, ADSYNT *p);
+int32_t adsyntset(CSOUND *, ADSYNT *p);
+int32_t clip(CSOUND *, CLIP *p);
+int32_t clip_set(CSOUND *, CLIP *p);
+int32_t clockoff(CSOUND *, CLOCK *p);
+int32_t clockon(CSOUND *, CLOCK *p);
+int32_t clockread(CSOUND *, CLKRD *p);
+int32_t clockset(CSOUND *, CLOCK *p);
+int32_t scratchread(CSOUND *, SCRATCHPAD *p);
+int32_t scratchwrite(CSOUND *, SCRATCHPAD *p);
+
+int32_t hsboscil(CSOUND *, HSBOSC *p);
+int32_t hsboscset(CSOUND *, HSBOSC *p);
+int32_t impulse(CSOUND *, IMPULSE *p);
+int32_t impulse_set(CSOUND *, IMPULSE *p);
+
+//int32_t totalcount(CSOUND *, INSTCNT *p);
+int32_t kphsorbnk(CSOUND *, PHSORBNK *p);
+int32_t ktrnseg(CSOUND *, TRANSEG *p);
+int32_t ktrnsegr(CSOUND *csound, TRANSEG *p);
+int32_t lpf18db(CSOUND *, LPF18 *p);
+int32_t lpf18set(CSOUND *, LPF18 *p);
+int32_t mac(CSOUND *, SUM *p);
+int32_t maca(CSOUND *, SUM *p);
+int32_t macset(CSOUND *, SUM *p);
+
+int32_t phsbnkset(CSOUND *, PHSORBNK *p);
+int32_t phsorbnk(CSOUND *, PHSORBNK *p);
+int32_t pinkish(CSOUND *, PINKISH *p);
+int32_t pinkset(CSOUND *, PINKISH *p);
+int32_t pitch(CSOUND *, PITCH *p);
+int32_t pitchamdf(CSOUND *, PITCHAMDF *p);
+int32_t pitchamdfset(CSOUND *, PITCHAMDF *p);
+int32_t pitchset(CSOUND *, PITCH *p);
+int32_t trnseg(CSOUND *, TRANSEG *p);
+int32_t trnsegr(CSOUND *csound, TRANSEG *p);
+int32_t trnset(CSOUND *, TRANSEG *p);
+int32_t trnset_bkpt(CSOUND *, TRANSEG *p);
+int32_t trnsetr(CSOUND *csound, TRANSEG *p);
+int32_t varicol(CSOUND *, VARI *p);
+int32_t varicolset(CSOUND *, VARI *p);
+int32_t waveset(CSOUND *, BARRI *p);
+int32_t wavesetset(CSOUND *, BARRI *p);
+int32_t medfiltset(CSOUND *, MEDFILT *p);
+int32_t medfilt(CSOUND *, MEDFILT *p);
+int32_t kmedfilt(CSOUND *, MEDFILT *p);
 
 #endif
 

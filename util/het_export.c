@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 /* ***************************************************************** */
 /* ******** Program to export hetro files in tabular format. ******* */
@@ -34,7 +33,7 @@
 
 #define END  32767
 
-void het_export_usage(CSOUND *csound)
+static void het_export_usage(CSOUND *csound)
 {
     csound->Message(csound, "%s", Str("Usage: het_export het_file cstext_file\n"));
 }
@@ -51,7 +50,7 @@ static int32_t het_export(CSOUND *csound, int32_t argc, char **argv)
       het_export_usage(csound);
       return 1;
     }
-    inf = csound->ldmemfile2withCB(csound, argv[1], CSFTYPE_HETRO,NULL);
+    inf = csound->LoadMemoryFile(csound, argv[1], CSFTYPE_HETRO,NULL);
     if (UNLIKELY(inf == NULL)) {
       csound->Message(csound, Str("Cannot open input file %s\n"), argv[1]);
       return 1;
@@ -78,10 +77,10 @@ static int32_t het_export(CSOUND *csound, int32_t argc, char **argv)
 
 int32_t het_export_init_(CSOUND *csound)
 {
-    int32_t retval = csound->AddUtility(csound, "het_export", het_export);
+    int32_t retval = (csound->GetUtility(csound))->AddUtility(csound, "het_export", het_export);
     if (!retval) {
       retval =
-        csound->SetUtilityDescription(csound, "het_export",
+        (csound->GetUtility(csound))->SetUtilityDescription(csound, "het_export",
                                       Str("translate hetro analysis file "
                                           "to text form"));
     }

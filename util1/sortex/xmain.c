@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csound.h"                                /*   XMAIN.C  */
@@ -34,7 +33,7 @@ int main(int ac, char **av)         /* stdio stub for standalone extract */
     FILE    *xfp;
     int     err = 1;
 
-    csound = csoundCreate(NULL);
+    csound = csoundCreate(NULL,NULL);
 #if defined(LINUX) || defined(SGI) || defined(sol) || \
     defined(__MACH__) || defined(__EMX__)
     signal(SIGPIPE, SIG_DFL);

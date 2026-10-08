@@ -18,8 +18,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"
@@ -53,7 +52,7 @@
 
 #define ST(x)   (((REMOTE_GLOBALS*) ((CSOUND*)csound)->remoteGlobals)->x)
 
-void remote_Cleanup(CSOUND *csound);
+void remote_cleanup(CSOUND *csound);
 
 void remoteRESET(CSOUND *csound)
 {
@@ -146,7 +145,7 @@ static int32_t getIpAddress(char *ipaddr)
 
 char remoteID(CSOUND *csound)
 {
-    int32_t len = strlen(ST(ipadrs));
+    int32_t len = (int32_t) strlen(ST(ipadrs));
     return ST(ipadrs)[len-1];
 }
 
@@ -225,12 +224,12 @@ static int32_t callox(CSOUND *csound)
 
 error:
     /* Clean up anything we may have allocated before running out of memory */
-    remote_Cleanup(csound);
+    remote_cleanup(csound);
     return -1;
 }
 
-/* Cleanup the above; called from musmon csoundCleanup */
-void remote_Cleanup(CSOUND *csound)
+/* Cleanup the above; called from musmon csound_cleanup */
+void remote_cleanup(CSOUND *csound)
 {
     int32_t fd;
     if (csound->remoteGlobals == NULL) return;
@@ -314,7 +313,7 @@ static int32_t CLopen(CSOUND *csound, char *ipadrs)     /* Client -- open to sen
 int32_t CLsend(CSOUND *csound, int32_t conn, void *data, int32_t length)
 {
     int32_t nbytes;
-    if (UNLIKELY((nbytes = write(conn, data, length)) <= 0)) {
+    if (UNLIKELY((nbytes = (int32_t) write(conn, data, length)) <= 0)) {
       csound->ErrorMsg(csound, Str("write to socket failed"));
       return NOTOK;
     }
@@ -447,7 +446,7 @@ int32_t insremot(CSOUND *csound, INSREMOT *p)
 /*                     (char *)p->str1 , ST(ipadrs)); */
     if (strcmp(ST(ipadrs), (char *)p->str1->data) == 0) {
       /* if client is this adrs */
-      MYFLT   **argp = p->insno;
+      cs_float   **argp = p->insno;
       int32_t rfd = 0;
       if ((rfd = CLopen(csound, (char *)p->str2->data)) < 0)
         /* open port to remote */
@@ -496,7 +495,7 @@ int32_t insglobal(CSOUND *csound, INSGLOBAL *p)
                     (char *)p->str1->data , ST(ipadrs));
     if (strcmp(ST(ipadrs), (char *)p->str1->data) == 0) {
       /* if client is this adrs */
-      MYFLT   **argp = p->insno;
+      cs_float   **argp = p->insno;
       for (nargs -= 1; nargs--; ) {
         int16 insno = (int16)**argp++;             /* for each insno */
         if (UNLIKELY(insno <= 0 || insno > 128)) {
@@ -527,7 +526,7 @@ int32_t midremot(CSOUND *csound, MIDREMOT *p)    /* declare certain channels for
     }
     if (strcmp(ST(ipadrs), (char *)p->str1->data) == 0) {
       /* if client is this adrs */
-      MYFLT   **argp = p->chnum;
+      cs_float   **argp = p->chnum;
       int32_t  rfd;
         /* open port to remote */
       if (UNLIKELY((rfd = CLopen(csound, (char *)p->str2->data)) < 0))
@@ -575,7 +574,7 @@ int32_t midglobal(CSOUND *csound, MIDGLOBAL *p)
 /*                     (char *)p->str1 , ST(ipadrs)); */
     if (strcmp(ST(ipadrs), (char *)p->str1->data) == 0) {
       /* if client is this adrs */
-      MYFLT   **argp = p->chnum;
+      cs_float   **argp = p->chnum;
       for (nargs -= 1; nargs--; ) {
         int16 chnum = (int16)**argp++;             /* for each channel */
         if (UNLIKELY(chnum <= 0 || chnum > 16)) {
@@ -597,7 +596,9 @@ int32_t insSendevt(CSOUND *csound, EVTBLK *evt, int32_t rfd)
     REMOT_BUF *bp = &ST(CLsendbuf);
     EVTBLK *cpp = (EVTBLK *)bp->data;       /* align an EVTBLK struct */
     int32_t nn;
-    MYFLT *f, *g;
+    cs_float *f, *g;
+    if(cpp->p == NULL)
+      cpp->p = csound->Calloc(csound, sizeof(cs_float)*(PMAX+1));
     cpp->pinstance = NULL;
     cpp->strarg = NULL;                     /* copy the initial header */
     cpp->scnt = 0;
@@ -608,7 +609,7 @@ int32_t insSendevt(CSOUND *csound, EVTBLK *evt, int32_t rfd)
     for (nn = evt->pcnt + 3; nn--; )        /* copy the remaining data */
       *g++ = *f++;
     bp->type = SCOR_EVT;                    /* insert type and len */
-    bp->len = (char *)g - (char *)bp;
+    bp->len = (int32_t)((char *)g - (char *)bp);
     if (UNLIKELY(CLsend(csound, rfd, (void *)bp, (int32_t)bp->len) < 0)) {
       csound->ErrorMsg(csound, Str("CLsend failed"));
       return NOTOK;
@@ -634,7 +635,7 @@ int32_t MIDIsendevt(CSOUND *csound, MEVENT *evt, int32_t rfd)
     bp->type = MIDI_EVT;                    /* insert type and len    */
     bp->len = sizeof(int32_t) * 2 + sizeof(MEVENT);
 
-    if (UNLIKELY(CLsend(csound, rfd, (void *)bp, (size_t)bp->len) < 0)) {
+    if (UNLIKELY(CLsend(csound, rfd, (void *)bp, (int32_t)bp->len) < 0)) {
       csound->ErrorMsg(csound, Str("CLsend failed"));
       return NOTOK;
     }
@@ -659,7 +660,7 @@ int32_t MIDIsend_msg(CSOUND *csound, MEVENT *evt, int32_t rfd)
     bp->type = MIDI_MSG;                    /* insert type and len    */
     bp->len = sizeof(int32_t) * 2 + sizeof(MEVENT);
 
-    if (UNLIKELY(CLsend(csound, rfd, (void *)bp, (size_t)bp->len) < 0)) {
+    if (UNLIKELY(CLsend(csound, rfd, (void *)bp, (int32_t)bp->len) < 0)) {
       csound->ErrorMsg(csound, Str("CLsend failed"));
       return NOTOK;
     }
@@ -711,8 +712,8 @@ char remoteID(CSOUND *csound)
     return '\0';
 }
 
-/* Cleanup the above; called from musmon csoundCleanup */
-void remote_Cleanup(CSOUND *csound)
+/* Cleanup the above; called from musmon csound_cleanup */
+void remote_cleanup(CSOUND *csound)
 {
     csound->remoteGlobals = NULL;
     return;

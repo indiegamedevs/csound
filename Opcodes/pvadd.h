@@ -17,11 +17,12 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*                                                      PVADD.H    */
+
+#pragma once
 
 #define     MAXBINS         4096
 #ifndef PVFRAMSIZE
@@ -32,15 +33,14 @@
 
 typedef struct {
     OPDS    h;
-    MYFLT   *rslt, *ktimpnt, *kfmod, *ifilno, *ifn, *ibins;
-    MYFLT   *ibinoffset, *ibinincr, *imode, *ifreqlim, *igatefun;
+    cs_float   *rslt, *ktimpnt, *kfmod, *ifilno, *ifn, *ibins;
+    cs_float   *ibinoffset, *ibinincr, *imode, *ifreqlim, *igatefun, *ifiletime;
     FUNC    *ftp, *AmpGateFunc;
     AUXCH   auxch;
-    MYFLT   *oscphase, *buf, PvMaxAmp;
-    MYFLT   frPrtim, asr;
+    cs_float   *oscphase, *buf, PvMaxAmp;
+    cs_float   frPrtim, asr;
     float   *frPtr, *pvcopy;
     int32   maxFr, frSiz, prFlg, mems;
-    int32_t
-    maxbin;
+    int32_t maxbin, floatph;
 } PVADD;
 

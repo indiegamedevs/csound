@@ -19,8 +19,7 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with Csound; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-  02111-1307 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 
 */
 
@@ -494,8 +493,8 @@ AudioProducer::HandleEvent(const media_timed_event* event,
                       mSamplesSent += nSamples;
 
                       bigtime_t nextEvent = mStartTime +
-                        bigtime_t(double(mSamplesSent) /
-                                  double(mOutput.format.u.raw_audio.frame_rate)
+                        bigtime_t(cs_double(mSamplesSent) /
+                                  cs_double(mOutput.format.u.raw_audio.frame_rate)
                                   * 1000000.0);
                       media_timed_event
                         nextBufferEvent(nextEvent,
@@ -556,8 +555,8 @@ AudioProducer::FillNextBuffer(bigtime_t event_time)
         if (RunMode() == B_RECORDING)
           stamp = event_time;
         else
-          stamp = mStartTime + bigtime_t(double(mSamplesSent) /
-                                         double(mOutput.format.u.raw_audio.frame_rate) * 1000000.0);
+          stamp = mStartTime + bigtime_t(cs_double(mSamplesSent) /
+                                         cs_double(mOutput.format.u.raw_audio.frame_rate) * 1000000.0);
         hdr->start_time = stamp;
 
         return buf;

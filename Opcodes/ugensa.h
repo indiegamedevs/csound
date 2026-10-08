@@ -17,39 +17,43 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*                                                      UGENSM.H  */
 
-#define PFRAC1(x)   ((MYFLT)((x) & ftp1->lomask) * ftp1->lodiv)
+#pragma once
+
+#define PFRAC1(x)   ((cs_float)((x) & ftp1->lomask) * ftp1->lodiv)
 
 typedef struct overlap {
   struct overlap *nxtact;
   struct overlap *nxtfree;
   int32          timrem, dectim, formphs, forminc;
-  uint32         risphs;
+  int32         risphs;
   int32          risinc, decphs, decinc;
-  MYFLT          curamp, expamp;
+  cs_double         formphsf, formincf, risphsf, risincf, decphsf, decincf;
+  cs_float          curamp, expamp;
 } OVERLAP;
 
 typedef struct {
   OPDS  h;
-  MYFLT *ar, *xamp, *xdens, *xtrans, *xspd, *koct, *kband, *kris, *kdur, *kdec;
-  MYFLT *iolaps, *ifna, *ifnb, *itotdur, *iphs, *itmode, *iskip;
+  cs_float *ar, *xamp, *xdens, *xtrans, *xspd, *koct, *kband, *kris, *kdur, *kdec;
+  cs_float *iolaps, *ifna, *ifnb, *itotdur, *iphs, *itmode, *iskip;
   OVERLAP       basovrlap;
   int32 durtogo, fundphs, fofcount, prvsmps, spdphs; /*last added JMC for FOG*/
-  MYFLT prvband, expamp, preamp, fogcvt; /*last added JMC for FOG*/
+  cs_float fundphsf, spdphsf;
+  cs_float prvband, expamp, preamp, fogcvt; /*last added JMC for FOG*/
   int16 xincod, ampcod, fundcod;
   int16 formcod, fmtmod, speedcod; /*last added JMC for FOG*/
   AUXCH auxch;
   FUNC  *ftp1, *ftp2;
+  int32   floatph;         /* floating-point phase */
 } FOGS;
 
 /*typedef struct {
         OPDS    h;
-        MYFLT   *sr, *xamp, *xcps, *ifn, *iphs;
+        cs_float   *sr, *xamp, *xcps, *ifn, *iphs;
         int32   lphs;
         FUNC    *ftp;
 } JMC;

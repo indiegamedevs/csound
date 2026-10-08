@@ -17,8 +17,7 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with Csound; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-  02110-1301 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include <AudioUnit/AudioUnit.h>
@@ -27,6 +26,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include "csdl.h"
+#include "rt_audio_fade.h"
 #include "soundio.h"
 
 /* Modified from BSD sources for strlcpy */
@@ -77,88 +77,91 @@ typedef float AudioUnitSampleType;
 
 typedef struct {
   char name[128];
-  int outchannels;
-  int inchannels;
-  int indevnum;
-  int outdevnum;
+  int32_t outchannels;
+  int32_t inchannels;
+  int32_t indevnum;
+  int32_t outdevnum;
 } Device_Info;
 
 
 typedef struct csdata_ {
   AudioDeviceID dev;
   AudioStreamBasicDescription format;
-  int         inBufSamples;
-  int         outBufSamples;
-  int         currentInputIndex;
-  int         currentOutputIndex;
-  MYFLT       *inputBuffer;
-  MYFLT       *outputBuffer;
+  int32_t         inBufSamples;
+  int32_t         outBufSamples;
+  int32_t         currentInputIndex;
+  int32_t         currentOutputIndex;
+  cs_float       *inputBuffer;
+  cs_float       *outputBuffer;
   csRtAudioParams *inParm;
   csRtAudioParams *outParm;
-  int onchnls, inchnls;
+  int32_t onchnls, inchnls;
   AudioComponentInstance outunit;
   AudioComponentInstance inunit;
   CSOUND *csound;
   AudioBufferList *inputdata;
-  int disp;
+  int32_t disp;
   AudioDeviceID defdevin;
   AudioDeviceID defdevout;
-  int devnos;
-  int devin;
-  int devout;
+  int32_t devnos;
+  int32_t devin;
+  int32_t devout;
   void *incb;
   void *outcb;
+  cs_float sr;
+  int32_t complete;          /* set at close: fade out, then stop  */
+  RT_AUDIO_FADE closeFade;
 } csdata;
 
 
-OSStatus  Csound_Input(void *inRefCon,
+static OSStatus  Csound_Input(void *inRefCon,
                        AudioUnitRenderActionFlags *ioActionFlags,
                        const AudioTimeStamp *inTimeStamp,
                        UInt32 inBusNumber,
                        UInt32 inNumberFrames,
                        AudioBufferList *ioData);
 
-OSStatus  Csound_Render(void *inRefCon,
+static OSStatus  Csound_Render(void *inRefCon,
                         AudioUnitRenderActionFlags *ioActionFlags,
                         const AudioTimeStamp *inTimeStamp,
                         UInt32 dump,
                         UInt32 inNumberFrames,
                         AudioBufferList *ioData);
 
-static void DAC_channels(CSOUND *csound, int chans){
-    int *dachans = (int *) csound->QueryGlobalVariable(csound, "_DAC_CHANNELS_");
+static void DAC_channels(CSOUND *csound, int32_t chans){
+    int32_t *dachans = (int32_t *) csound->QueryGlobalVariable(csound, "_DAC_CHANNELS_");
     if (dachans == NULL) {
       if (csound->CreateGlobalVariable(csound, "_DAC_CHANNELS_",
-                                       sizeof(int)) != 0)
+                                       sizeof(int32_t)) != 0)
         return;
-      dachans = (int *) csound->QueryGlobalVariable(csound, "_DAC_CHANNELS_");
+      dachans = (int32_t *) csound->QueryGlobalVariable(csound, "_DAC_CHANNELS_");
       *dachans = chans;
     }
 }
 
-static void ADC_channels(CSOUND *csound, int chans){
-    int *dachans = (int *) csound->QueryGlobalVariable(csound, "_ADC_CHANNELS_");
+static void ADC_channels(CSOUND *csound, int32_t chans){
+    int32_t *dachans = (int32_t *) csound->QueryGlobalVariable(csound, "_ADC_CHANNELS_");
     if (dachans == NULL) {
       if (csound->CreateGlobalVariable(csound, "_ADC_CHANNELS_",
-                                       sizeof(int)) != 0)
+                                       sizeof(int32_t)) != 0)
         return;
-      dachans = (int *) csound->QueryGlobalVariable(csound, "_ADC_CHANNELS_");
+      dachans = (int32_t *) csound->QueryGlobalVariable(csound, "_ADC_CHANNELS_");
       *dachans = chans;
     }
 }
 
-int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
-               csdata *cdata, int isInput)
+static int32_t AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
+               csdata *cdata, int32_t isInput)
 {
     UInt32  psize, devnum, devnos;
     AudioDeviceID dev;
     AudioDeviceID *sysdevs;
     AudioStreamBasicDescription format;
-    int     i;
+    int32_t     i;
     Device_Info *devinfo;
     UInt32  bufframes, nchnls;
-    int devouts = 0, devins = 0;
-    double srate;
+    int32_t devouts = 0, devins = 0;
+    Float64 srate;
     UInt32 enableIO, maxFPS;
     AudioComponent HALOutput;
     AudioComponentInstance *aunit;
@@ -196,10 +199,10 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
                                &prop, 0, NULL, &psize, sysdevs);
 
     cdata->devnos = devnos;
-    for (i = 0; (unsigned int) i < devnos; i++) {
+    for (i = 0; (uint32_t) i < devnos; i++) {
       AudioBufferList *b;
-      int devchannels, k, n;
-      int numlists;
+      int32_t devchannels, k, n;
+      int32_t numlists;
       psize = sizeof(CFStringRef);
       prop.mScope = kAudioObjectPropertyScopeGlobal;
       prop.mSelector = kAudioObjectPropertyName;
@@ -222,7 +225,7 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
       AudioObjectGetPropertyData(sysdevs[i],
                                  &prop, 0, NULL, &psize, b);
       for(n=0; n < numlists; n++){
-        for(k=0; (unsigned int) k < b[n].mNumberBuffers; k++)
+        for(k=0; (uint32_t) k < b[n].mNumberBuffers; k++)
           devchannels += b[n].mBuffers[k].mNumberChannels;
       }
       devinfo[i].inchannels = devchannels;
@@ -241,7 +244,7 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
       AudioObjectGetPropertyData(sysdevs[i],
                                  &prop, 0, NULL, &psize, b);
       for(n=0; n < numlists; n++){
-        for(k=0; (unsigned int) k < b[n].mNumberBuffers; k++)
+        for(k=0; (uint32_t) k < b[n].mNumberBuffers; k++)
           devchannels += b[n].mBuffers[k].mNumberChannels;
       }
       devinfo[i].outchannels = devchannels;
@@ -252,9 +255,9 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
       csound->Free(csound,b);
     }
 
-     OPARMS O;
-    csound->GetOParms(csound, &O);
-    if(O.msglevel || O.odebug) {
+    const OPARMS *O;
+    O = csound->GetOParms(csound) ;
+    if(O->msglevel || O->odebug) {
     if (isInput)
       csound->Message(csound,
                       Str("AuHAL Module: found %d input device(s):\n"), devins);
@@ -262,7 +265,7 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
                          Str("AuHAL Module: found %d output device(s):\n"),
                          devouts);
 
-    for (i = 0; (unsigned int)  i < devnos; i++) {
+    for (i = 0; (uint32_t)  i < devnos; i++) {
       if (isInput) {
         if(devinfo[i].inchannels) {
           csound->Message(csound, Str("%d: %s (%d channels)\n"),
@@ -283,11 +286,11 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
     else devnum = parm->devNum;
 
     if (devnum > 0 && devnum < 1024) {
-      int CoreAudioDev = -1;
+      int32_t CoreAudioDev = -1;
       prop.mSelector = kAudioHardwarePropertyDevices;
       if (isInput) {
-        for(i=0; (unsigned int)  i < devnos; i++) {
-          if((unsigned int) devinfo[i].indevnum == devnum) {
+        for(i=0; (uint32_t)  i < devnos; i++) {
+          if((uint32_t) devinfo[i].indevnum == devnum) {
             CoreAudioDev = i;
             break;
           }
@@ -299,7 +302,7 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
                                      0, NULL, sizeof(AudioDeviceID), &dev);
         }
         else {
-       if(O.msglevel || O.odebug)
+       if(O->msglevel || O->odebug)
           csound->Warning(csound, Str("requested device %d out of range"),
                              devnum);
         }
@@ -307,8 +310,8 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
       }
       else {
         prop.mSelector = kAudioHardwarePropertyDefaultOutputDevice;
-        for(i=0;(unsigned int)  i < devnos; i++) {
-          if((unsigned int) devinfo[i].outdevnum == devnum)  CoreAudioDev = i;
+        for(i=0;(uint32_t)  i < devnos; i++) {
+          if((uint32_t) devinfo[i].outdevnum == devnum)  CoreAudioDev = i;
         }
         if (LIKELY(CoreAudioDev >= 0)) {
           dev  = sysdevs[CoreAudioDev];
@@ -317,18 +320,18 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
 
         }
         else {
-          if(O.msglevel || O.odebug)
+          if(O->msglevel || O->odebug)
           csound->Warning(csound, Str("requested device %d (%s) out of range"),
                              devnum, devinfo[CoreAudioDev].name);
         }
       }
     }
 
-    for(i=0; (unsigned int)  i < devnos; i++) {
+    for(i=0; (uint32_t)  i < devnos; i++) {
       if(sysdevs[i] == dev){
         if(isInput) {
           if(devinfo[i].inchannels < parm->nChannels) {
-            if(O.msglevel || O.odebug)
+            if(O->msglevel || O->odebug)
             csound->ErrorMsg(csound,
                              Str(" *** CoreAudio: Device has not enough"
                                  " inputs (%d, requested %d)\n"),
@@ -339,7 +342,7 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
         }
         else {
           if(devinfo[i].outchannels < parm->nChannels) {
-            if(O.msglevel || O.odebug)
+            if(O->msglevel || O->odebug)
             csound->ErrorMsg(csound,
                              Str(" *** CoreAudio: Device has not enough"
                                  " outputs (%d, requested %d)\n"),
@@ -357,7 +360,7 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
     prop.mSelector = kAudioObjectPropertyName;
     AudioObjectGetPropertyData(dev,
                                &prop, 0, NULL, &psize, &devName);
-    if(O.msglevel || O.odebug) {
+    if(O->msglevel || O->odebug) {
     if(isInput)
       csound->Message(csound, Str("selected input device: %s\n"),
                       CFStringGetCStringPtr(devName, defaultEncoding));
@@ -368,37 +371,51 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
     }
     CFRelease(devName);
 
-    srate = csound->GetSr(csound);
+    cdata->sr = srate = parm->sampleRate;
     if(!isInput){
       nchnls =cdata->onchnls = parm->nChannels;
-      bufframes = csound->GetOutputBufferSize(csound)/nchnls;
+      bufframes = (uint32_t) (csound->GetOutputBufferSize(csound)/nchnls);
     }
     else {
       nchnls = cdata->inchnls = parm->nChannels;
-      bufframes = csound->GetInputBufferSize(csound)/nchnls;
+      bufframes =  (uint32_t) (csound->GetInputBufferSize(csound)/nchnls);
     }
 
     /* although the SR is set in the stream properties,
        we also need to set the device to match */
-     double sr;
+    Float64 sr;
     prop.mSelector = kAudioDevicePropertyNominalSampleRate;
     if(!isInput){
       AudioObjectGetPropertyData(dev, &prop, 0, NULL, &psize, &sr);
-      csound->system_sr(csound, sr);
+      csound->GetSystemSr(csound, sr);
     }
 
-    psize = sizeof(double);
+    psize = sizeof(Float64);
     AudioObjectSetPropertyData(dev, &prop, 0, NULL, psize, &srate);
     AudioObjectGetPropertyData(dev, &prop, 0, NULL, &psize, &sr);
 
     if(srate < 0)
-      srate  =  csound->system_sr(csound, sr);
-    if(UNLIKELY(sr != srate)) {
-      if(O.msglevel || O.odebug)
-       csound->Warning(csound,
-                      Str("Attempted to set device SR, tried %.1f, got %.1f\n"),
+      srate  =  csound->GetSystemSr(csound, sr);
+    int attempts = 0;
+    while (UNLIKELY(sr != srate)) {
+       if(O->odebug)
+        csound->Warning(csound,
+                      Str("Attempted to set device SR, tried %.1f, got %.1f"),
                       srate, sr);
+       // wait for it
+       csound->Sleep(500);
+       // try again
+       AudioObjectSetPropertyData(dev, &prop, 0, NULL, psize, &srate);
+       AudioObjectGetPropertyData(dev, &prop, 0, NULL, &psize, &sr);
+       // try another 5 times max (2.5 sec wait)
+       if(++attempts > 5) {
+         csound->Warning(csound, Str("could not set sr to %.1f after %d attempts"),
+                         srate, attempts);
+         break;
+       }
     }
+    csound->Message(csound, Str("auhal: device sampling rate set to %.1f\n"),
+                    sr);
 
     HALOutput = AudioComponentFindNext(NULL, &cd);
     if (isInput) {
@@ -471,7 +488,7 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
       AudioUnitInitialize(*aunit);
       AudioOutputUnitStart(*aunit);
 
-      if(O.msglevel || O.odebug)
+      if(O->msglevel || O->odebug)
        csound->Message(csound,
                       Str("***** AuHAL module: output device open with %d "
                           "buffer frames\n"),
@@ -482,14 +499,14 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
       AURenderCallbackStruct input;
       AudioBufferList *CAInputData =
         (AudioBufferList*)csound->Malloc(csound,sizeof(UInt32)
-                                 + cdata->inchnls * sizeof(AudioBuffer));
+                                 + cdata->inchnls * sizeof(AudioBufferList));
       CAInputData->mNumberBuffers = cdata->inchnls;
       for (i = 0; i < cdata->inchnls; i++) {
         CAInputData->mBuffers[i].mNumberChannels = 1;
         CAInputData->mBuffers[i].mDataByteSize =
           bufframes * sizeof(Float32);
         CAInputData->mBuffers[i].mData =
-          csound->Calloc(csound,bufframes* sizeof(Float32));
+          csound->Calloc(csound,bufframes*sizeof(Float32));
       }
       cdata->inputdata = CAInputData;
 
@@ -499,11 +516,11 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
                            kAudioUnitScope_Input, isInput, &input, sizeof(input));
       AudioUnitInitialize(*aunit);
       AudioOutputUnitStart(*aunit);
-      if(O.msglevel || O.odebug)
+      if(O->msglevel || O->odebug)
        csound->Message(csound,
                       Str("***** AuHAL module: input device open with "
                           "%d buffer frames\n"),
-                      (int) bufframes);
+                      (int32_t) bufframes);
     }
 
     cdata->disp = 0;
@@ -511,12 +528,12 @@ int AuHAL_open(CSOUND *csound, const csRtAudioParams * parm,
 
 }
 
-int listDevices(CSOUND *csound, CS_AUDIODEVICE *list, int isOutput){
+int32_t listDevices(CSOUND *csound, CS_AUDIODEVICE *list, int32_t isOutput){
     UInt32  psize, devnos;
     AudioDeviceID *sysdevs;
     Device_Info *devinfo;
-    int     i;
-    int devouts = 0, devins = 0;
+    int32_t     i;
+    int32_t devouts = 0, devins = 0;
 
     AudioObjectPropertyAddress prop = {
       kAudioObjectPropertyName,
@@ -534,10 +551,10 @@ int listDevices(CSOUND *csound, CS_AUDIODEVICE *list, int isOutput){
     AudioObjectGetPropertyData(kAudioObjectSystemObject,
                                &prop, 0, NULL, &psize, sysdevs);
 
-    for (i = 0; (unsigned int) i < devnos; i++) {
+    for (i = 0; (uint32_t) i < devnos; i++) {
       AudioBufferList *b;
-      int devchannels, k, n;
-      int numlists;
+      int32_t devchannels, k, n;
+      int32_t numlists;
       psize = sizeof(CFStringRef);
       prop.mScope = kAudioObjectPropertyScopeGlobal;
       prop.mSelector = kAudioObjectPropertyName;
@@ -559,7 +576,7 @@ int listDevices(CSOUND *csound, CS_AUDIODEVICE *list, int isOutput){
       AudioObjectGetPropertyData(sysdevs[i],
                                  &prop, 0, NULL, &psize, b);
       for(n=0; n < numlists; n++){
-        for(k=0; (unsigned int)  k < b[n].mNumberBuffers; k++)
+        for(k=0; (uint32_t)  k < b[n].mNumberBuffers; k++)
           devchannels += b[n].mBuffers[k].mNumberChannels;
       }
       devinfo[i].inchannels = devchannels;
@@ -578,7 +595,7 @@ int listDevices(CSOUND *csound, CS_AUDIODEVICE *list, int isOutput){
       AudioObjectGetPropertyData(sysdevs[i],
                                  &prop, 0, NULL, &psize, b);
       for(n=0; n < numlists; n++){
-        for(k=0; (unsigned int) k < b[n].mNumberBuffers; k++)
+        for(k=0; (uint32_t) k < b[n].mNumberBuffers; k++)
           devchannels += b[n].mBuffers[k].mNumberChannels;
       }
       devinfo[i].outchannels = devchannels;
@@ -593,13 +610,13 @@ int listDevices(CSOUND *csound, CS_AUDIODEVICE *list, int isOutput){
     } else {
 
       char tmp[64], *s;
-      int n=0, i;
+      int32_t n=0, i;
 
       if ((s = (char*) csound->QueryGlobalVariable(csound, "_RTAUDIO")) == NULL)
         return 0;
 
       if(!isOutput){
-        for(i=0; (unsigned int)  i < devnos; i++) {
+        for(i=0; (uint32_t)  i < devnos; i++) {
           if(devinfo[i].inchannels) {
             strNcpy(list[n].device_name,  devinfo[i].name, 63);
             snprintf(tmp, 64, "adc%d", devinfo[i].indevnum);
@@ -612,7 +629,7 @@ int listDevices(CSOUND *csound, CS_AUDIODEVICE *list, int isOutput){
         }
         return n;
       } else {
-        for(i=0;(unsigned int) i < devnos; i++){
+        for(i=0;(uint32_t) i < devnos; i++){
           if(devinfo[i].outchannels) {
             strNcpy(list[n].device_name,  devinfo[i].name, 63);
             snprintf(tmp, 64, "dac%d", devinfo[i].outdevnum);
@@ -629,7 +646,7 @@ int listDevices(CSOUND *csound, CS_AUDIODEVICE *list, int isOutput){
 }
 
 /* open for audio input */
-static int recopen_(CSOUND *csound, const csRtAudioParams * parm)
+static int32_t recopen_(CSOUND *csound, const csRtAudioParams * parm)
 {
     csdata  *cdata;
     void **recordata = csound->GetRtRecordUserData(csound);
@@ -648,21 +665,21 @@ static int recopen_(CSOUND *csound, const csRtAudioParams * parm)
     cdata->inunit = NULL;
     *recordata = (void *) cdata;
     cdata->inParm =  (csRtAudioParams *) parm;
-    cdata->csound = cdata->csound;
+    cdata->csound = csound;
     cdata->inputBuffer =
-      (MYFLT *) csound->Calloc(csound,
-                               csound->GetInputBufferSize(csound)* sizeof(MYFLT));
+      (cs_float *) csound->Calloc(csound,
+                               csound->GetInputBufferSize(csound)* sizeof(cs_float));
     cdata->incb =
       csound->CreateCircularBuffer(csound,
-                                   parm->bufSamp_HW*parm->nChannels, sizeof(MYFLT));
+                                   parm->bufSamp_HW*parm->nChannels,
+                                   sizeof(cs_float));
 
-
-    int ret = AuHAL_open(csound, parm, cdata, 1);
+    int32_t ret = AuHAL_open(csound, parm, cdata, 1);
     return ret;
 }
 
 /* open for audio output */
-static int playopen_(CSOUND *csound, const csRtAudioParams * parm)
+static int32_t playopen_(CSOUND *csound, const csRtAudioParams * parm)
 {
     csdata  *cdata;
     void    **playdata = csound->GetRtPlayUserData(csound);
@@ -678,131 +695,136 @@ static int playopen_(CSOUND *csound, const csRtAudioParams * parm)
     cdata->outParm =  (csRtAudioParams *) parm;
     cdata->csound = csound;
     cdata->outputBuffer =
-      (MYFLT *) csound->Calloc(csound,
-                               csound->GetOutputBufferSize(csound)* sizeof(MYFLT));
+      (cs_float *) csound->Calloc(csound,
+                               csound->GetOutputBufferSize(csound)*sizeof(cs_float));
     memset(cdata->outputBuffer, 0,
-           csound->GetOutputBufferSize(csound)*sizeof(MYFLT));
+           csound->GetOutputBufferSize(csound)*sizeof(cs_float));
+
     cdata->outcb =
       csound->CreateCircularBuffer(csound,
-                                   parm->bufSamp_HW*parm->nChannels, sizeof(MYFLT));
+                                   parm->bufSamp_HW*parm->nChannels,
+                                   sizeof(cs_float));
+    ATOMIC_SET(cdata->complete, 0);
+    rt_audio_fade_reset(&cdata->closeFade);
 
     return AuHAL_open(csound, parm,cdata,0);
 }
 
-OSStatus  Csound_Input(void *inRefCon,
+
+static OSStatus  Csound_Input(void *inRefCon,
                        AudioUnitRenderActionFlags *ioActionFlags,
                        const AudioTimeStamp *inTimeStamp,
                        UInt32 inBusNumber,
                        UInt32 inNumberFrames,
-                       AudioBufferList *ioData)
-{
+                       AudioBufferList *ioData){
     csdata *cdata = (csdata *) inRefCon;
     CSOUND *csound = cdata->csound;
-    int inchnls = cdata->inchnls;
-    MYFLT *inputBuffer = cdata->inputBuffer;
-    int j,k;
+    int32_t inchnls = cdata->inchnls;
+    cs_float *inputBuffer = cdata->inputBuffer;
+    int32_t j,k,i,chns;
     Float32 *buffer;
-    int n = inNumberFrames*inchnls;
-    int l;
-    IGN(ioData);
-
+    int32_t n = inNumberFrames*inchnls;
     AudioUnitRender(cdata->inunit, ioActionFlags, inTimeStamp, inBusNumber,
                     inNumberFrames, cdata->inputdata);
-    /*for (k = 0; k < inchnls; k++){
-      buffer = (Float32 *) cdata->inputdata->mBuffers[k].mData;
-      for(j=0; (unsigned int) j < inNumberFrames; j++){
-        inputBuffer[j*inchnls+k] = buffer[j];
+
+    ioData = cdata->inputdata;
+    chns = ioData->mBuffers[0].mNumberChannels;
+    if(chns == 1) { // non-interleaved
+      for (i = 0; i < ioData->mNumberBuffers; i++) {
+        buffer = (Float32 *) ioData->mBuffers[i].mData;
+        for(j = 0, k = 0; (uint32_t) k < inNumberFrames; j+=inchnls, k++)
+          inputBuffer[j+i] = (cs_float) buffer[k];
       }
-      }*/
-    unsigned int i, chns;
-    for (i = 0; i <  cdata->inputdata->mNumberBuffers; i++) {
-      buffer = (Float32 *)  cdata->inputdata->mBuffers[i].mData;
-      chns =  cdata->inputdata->mBuffers[i].mNumberChannels;
-      for(j=0, l=0; (unsigned int) j < inNumberFrames*chns; j+=chns, l++) {
-	for (k = 0; k < chns; k++) {
-	  inputBuffer[l*inchnls+(k+1)*i] = buffer[j+k];
-	}
-      }
-    }      
-    l = csound->WriteCircularBuffer(csound, cdata->incb,inputBuffer,n);
+    } else { // interleaved
+      buffer = (Float32 *) ioData->mBuffers[0].mData;
+      for(k = 0; k < n; k++)
+        inputBuffer[k] = (cs_float) buffer[k];
+    }
+    csound->WriteCircularBuffer(csound, cdata->incb,inputBuffer,n);
     return 0;
 }
-
-#define MICROS 1000000
-static int rtrecord_(CSOUND *csound, MYFLT *inbuff_, int nbytes)
+#define slt 100
+static int32_t rtrecord_(CSOUND *csound, cs_float *inbuff_, int32_t nbytes)
 {
     csdata  *cdata;
-    int n = nbytes/sizeof(MYFLT);
-    int m = 0, l;//, w = n;
-    //MYFLT sr = csound->GetSr(csound);
+    int32_t n = nbytes/sizeof(cs_float);
+    int32_t m = 0, l;
     cdata = (csdata *) *(csound->GetRtRecordUserData(csound));
     do{
       l = csound->ReadCircularBuffer(csound,cdata->incb,&inbuff_[m],n);
       m += l;
       n -= l;
-      //if(n) usleep(MICROS*w/sr);
+      if(n) {
+        usleep(slt);
+      }
     } while(n);
+
     return nbytes;
 }
 
-OSStatus  Csound_Render(void *inRefCon,
+static OSStatus Csound_Render(void *inRefCon,
+    /* Matches the AudioUnit callback signature. */
+    /* NOLINTNEXTLINE(readability-non-const-parameter) */
                         AudioUnitRenderActionFlags *ioActionFlags,
                         const AudioTimeStamp *inTimeStamp,
                         UInt32 inBusNumber,
                         UInt32 inNumberFrames,
-                        AudioBufferList *ioData)
-{
+                        AudioBufferList *ioData) {
     csdata *cdata = (csdata *) inRefCon;
     CSOUND *csound = cdata->csound;
-    int onchnls = cdata->onchnls;
-    MYFLT *outputBuffer = cdata->outputBuffer;
-    int j,k;
+    int32_t onchnls = cdata->onchnls;
+    cs_float *outputBuffer = cdata->outputBuffer;
+    int32_t j,k,i,chns;
     Float32 *buffer;
-    int n = inNumberFrames*onchnls;
+    int32_t n = inNumberFrames*onchnls;
     IGN(ioActionFlags);
     IGN(inTimeStamp);
     IGN(inBusNumber);
 
+    memset(outputBuffer, 0, sizeof(cs_float)*n);
+    /* Once closing, fade the audio still queued out to silence, as
+       Ardour does when stopping its engine, so the stream never ends
+       on a non-zero sample. The fade spans the queued audio and so
+       reaches zero exactly when the buffer drains. */
+    if (ATOMIC_GET(cdata->complete) && cdata->closeFade.lengthFrames == 0) {
+      int32_t queued = csound->CheckCircularBuffer(csound, cdata->outcb, 0);
+      rt_audio_fade_begin(&cdata->closeFade, queued, onchnls);
+    }
     n = csound->ReadCircularBuffer(csound,cdata->outcb,outputBuffer,n);
-    /* for (k = 0; k < onchnls; k++) { */
-    /*   buffer = (Float32 *) ioData->mBuffers[k].mData; */
-    /*   for(j=0; (unsigned int) j < inNumberFrames; j++){ */
-    /*     buffer[j] = (Float32) outputBuffer[j*onchnls+k] ; */
-    /*     outputBuffer[j*onchnls+k] = FL(0.0); */
-    /*   } */
-    /* } */
-    unsigned int i, l = 0, chns;
-    for (i = 0; i < ioData->mNumberBuffers; i++) {
-      buffer = (Float32 *) ioData->mBuffers[i].mData;
-      chns = ioData->mBuffers[i].mNumberChannels;
-      for(j=0, l=0; (unsigned int) j < inNumberFrames*chns; j+=chns, l++) {
-	for (k = 0; k < chns; k++) {
-	  buffer[j+k] = (Float32) outputBuffer[l*onchnls+(k+1)*i];
-	  outputBuffer[l*onchnls+k*(i+1)] = FL(0.0);
-	}
+    if (ATOMIC_GET(cdata->complete) && n > 0)
+      rt_audio_fade_apply(&cdata->closeFade, outputBuffer, n, onchnls);
+
+    chns = ioData->mBuffers[0].mNumberChannels;
+    if(chns == 1) { // non-interleaved
+      for (i = 0; i < ioData->mNumberBuffers; i++) {
+        buffer = (Float32 *) ioData->mBuffers[i].mData;
+        for(j = 0, k = 0; (uint32_t) k < inNumberFrames; j+=onchnls, k++)
+          buffer[k] = (Float32) outputBuffer[j+i];
       }
-    }  
+    } else { // interleaved
+      buffer = (Float32 *) ioData->mBuffers[0].mData;
+      for(k = 0; k < n; k++)
+        buffer[k] = (Float32) outputBuffer[k];
+    }
     return 0;
 }
 
-static void rtplay_(CSOUND *csound, const MYFLT *outbuff_, int nbytes)
+static void rtplay_(CSOUND *csound, const cs_float *outbuff_, int32_t nbytes)
 {
     csdata  *cdata;
-    int n = nbytes/sizeof(MYFLT);
-    int m = 0, l;//, w = n;
-    //MYFLT sr = csound->GetSr(csound);
+    int32_t n = nbytes/sizeof(cs_float);
+    int32_t m = 0, l;
     cdata = (csdata *) *(csound->GetRtPlayUserData(csound));
     do {
       l = csound->WriteCircularBuffer(csound, cdata->outcb,&outbuff_[m],n);
       m += l;
       n -= l;
-      //if(n) usleep(MICROS*n/sr);
+      if(n) usleep(slt);
     } while(n);
 }
 
 /* close the I/O device entirely  */
 /* called only when both complete */
-
 static void rtclose_(CSOUND *csound)
 {
     csdata *cdata;
@@ -811,8 +833,37 @@ static void rtclose_(CSOUND *csound)
       cdata = (csdata *) *(csound->GetRtPlayUserData(csound));
 
     if (cdata != NULL) {
-      usleep(1000*csound->GetOutputBufferSize(csound)/
-             (csound->GetSr(csound)*csound->GetNchnls(csound)));
+      if (cdata->outunit != NULL) {
+        /* Mark closing so the render callback fades the queued audio out. */
+        ATOMIC_SET(cdata->complete, 1);
+
+        /* Wait until the callback has consumed the circular buffer.  The
+           timeout covers the requested queue and one render buffer, while
+           the second wait lets the final render block reach the device. */
+        int32_t waitMs = 100;
+        int32_t queued = csound->CheckCircularBuffer(csound, cdata->outcb, 0);
+        cs_double renderMs = 0.0;
+        if (cdata->sr > 0.0 && cdata->onchnls > 0) {
+          cs_double queueMs = 1000.0 * (cs_double) queued /
+                           ((cs_double) cdata->onchnls * (cs_double) cdata->sr);
+          renderMs = 1000.0 *
+                     (cs_double) csound->GetOutputBufferSize(csound) /
+                     ((cs_double) cdata->onchnls * (cs_double) cdata->sr);
+          waitMs = (int32_t) (queueMs + renderMs + 20.0);
+          if (waitMs < 50)
+            waitMs = 50;
+        }
+        do {
+          if (queued == 0)
+            break;
+          csound->Sleep(1);
+          queued = csound->CheckCircularBuffer(csound, cdata->outcb, 0);
+        } while (--waitMs > 0);
+        if (queued != 0)
+          queued = csound->CheckCircularBuffer(csound, cdata->outcb, 0);
+        if (queued == 0)
+          csound->Sleep((size_t) (renderMs + 10.0));
+      }
 
       if(cdata->inunit != NULL){
         AudioOutputUnitStop(cdata->inunit);
@@ -839,7 +890,7 @@ static void rtclose_(CSOUND *csound)
       *(csound->GetRtPlayUserData(csound)) = NULL;
 
       if(cdata->inputdata) {
-        int i;
+        int32_t i;
         for (i = 0; i < cdata->inchnls; i++)
           csound->Free(csound,cdata->inputdata->mBuffers[i].mData);
         csound->Free(csound,cdata->inputdata);
@@ -868,19 +919,14 @@ static void rtclose_(CSOUND *csound)
       csound->DestroyCircularBuffer(csound, cdata->incb);
       csound->DestroyCircularBuffer(csound, cdata->outcb);
       csound->Free(csound,cdata);
-      OPARMS O;
-      csound->GetOParms(csound, &O);
-      if(O.msglevel || O.odebug)
-       csound->Message(csound, "%s", Str("AuHAL module: device closed\n"));
+      csound->DebugMsg(csound, "%s", Str("AuHAL module: device closed\n"));
     }
 }
 
-int csoundModuleInit(CSOUND *csound)
+int32_t csoundModuleInit(CSOUND *csound)
 {
     char   *drv;
-    OPARMS O;
-    csound->GetOParms(csound, &O);
-    csound->module_list_add(csound, "auhal", "audio");
+    csound->ModuleListAdd(csound, "auhal", "audio");
     drv = (char *) csound->QueryGlobalVariable(csound, "_RTAUDIO");
     if (drv == NULL)
       return 0;
@@ -889,8 +935,7 @@ int csoundModuleInit(CSOUND *csound)
           strcmp(drv, "coreaudio") == 0 || strcmp(drv, "CoreAudio") == 0 ||
           strcmp(drv, "COREAUDIO") == 0))
       return 0;
-   if(O.msglevel || O.odebug)
-    csound->Message(csound, "%s", Str("rtaudio: coreaaudio-AuHAL module enabled\n"));
+    csound->DebugMsg(csound, "%s", Str("rtaudio: coreaaudio-AuHAL module enabled\n"));
     csound->SetPlayopenCallback(csound, playopen_);
     csound->SetRecopenCallback(csound, recopen_);
     csound->SetRtplayCallback(csound, rtplay_);
@@ -900,7 +945,12 @@ int csoundModuleInit(CSOUND *csound)
     return 0;
 }
 
-int csoundModuleCreate(CSOUND *csound)
+PUBLIC int32_t csoundModuleInfo(void)
+{
+  return CSOUND_MODULE_INFO;
+}
+
+int32_t csoundModuleCreate(CSOUND *csound)
 {
     IGN(csound);
     return 0;

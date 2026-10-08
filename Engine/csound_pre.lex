@@ -19,17 +19,26 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MAc
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <float.h>
 #include "csoundCore.h"
 #include "corfile.h"
 #include <inttypes.h>
+
+#ifdef USE_DOUBLE
+  #define CS_FLOAT_MAX DBL_MAX
+  #define CS_FLOAT_MIN DBL_MIN
+#else
+  #define CS_FLOAT_MAX FLT_MAX
+  #define CS_FLOAT_MIN FLT_MIN
+#endif
+
 #define YY_DECL int yylex (CSOUND *csound, yyscan_t yyscanner)
 static void comment(yyscan_t);
 static void do_comment(yyscan_t);
@@ -41,7 +50,7 @@ static void do_umacro(CSOUND *, char *, yyscan_t);
 static void do_umacroq(CSOUND *, char *, yyscan_t);
 static void do_ifdef(CSOUND *, char *, yyscan_t);
 static void do_ifdef_skip_code(CSOUND *, yyscan_t);
-static void do_function(CSOUND*, char *, CORFIL*);
+static void do_function(CSOUND*, char *, CORFIL*, int32_t);
 //static void print_csound_predata(CSOUND *,char *,yyscan_t);
 static void csound_pre_line(CSOUND *, CORFIL*, yyscan_t);
 //static void delete_macros(CSOUND*, yyscan_t);
@@ -176,7 +185,7 @@ QNAN            "qnan"[ \t]*\(
                   csound_preset_lineno(1+csound_preget_lineno(yyscanner),
                                        yyscanner);
                   if (PARM->isString==0) {
-                    sprintf(bb, "#sline %d ", csound_preget_lineno(yyscanner));
+                    snprintf(bb, 80, "#sline %d ", csound_preget_lineno(yyscanner));
                     corfile_puts(csound, bb, csound->expanded_orc);
                   }
                 }
@@ -266,6 +275,7 @@ QNAN            "qnan"[ \t]*\(
                      PARM->alt_stack[PARM->macro_stack_ptr].line =
                        csound_preget_lineno(yyscanner);
                      PARM->alt_stack[PARM->macro_stack_ptr].path = NULL;
+                     PARM->alt_stack[PARM->macro_stack_ptr].included = 0;
                      PARM->alt_stack[PARM->macro_stack_ptr++].s = NULL;
                      yypush_buffer_state(YY_CURRENT_BUFFER, yyscanner);
                      csound_preset_lineno(1, yyscanner);
@@ -385,6 +395,7 @@ QNAN            "qnan"[ \t]*\(
                        PARM->alt_stack[PARM->macro_stack_ptr].line =
                          csound_preget_lineno(yyscanner);
                        PARM->alt_stack[PARM->macro_stack_ptr].path = NULL;
+                       PARM->alt_stack[PARM->macro_stack_ptr].included = 0;
                        PARM->alt_stack[PARM->macro_stack_ptr++].s = csound->orc_macros;
                        PARM->alt_stack[PARM->macro_stack_ptr].n = 0;
                        PARM->alt_stack[PARM->macro_stack_ptr].line =
@@ -467,8 +478,8 @@ QNAN            "qnan"[ \t]*\(
                     x = csound->orc_macros;
                     if (x==y) {
                       while (n>0) {
-                        mfree(csound, y->name); x=y->next;
-                        mfree(csound, y); y=x; n--;
+                        csoundFree(csound, y->name); x=y->next;
+                        csoundFree(csound, y); y=x; n--;
                       }
                       csound->orc_macros = x;
                     }
@@ -477,7 +488,7 @@ QNAN            "qnan"[ \t]*\(
                       while (x->next != y) x = x->next;
                       while (n>0) {
                         nxt = y->next;
-                        mfree(csound, y->name); mfree(csound, y); y=nxt; n--;
+                        csoundFree(csound, y->name); csoundFree(csound, y); y=nxt; n--;
                       }
                       x->next = nxt;
                     }
@@ -485,6 +496,7 @@ QNAN            "qnan"[ \t]*\(
                   }
                   csound_preset_lineno(PARM->alt_stack[PARM->macro_stack_ptr].line,
                                        yyscanner);
+
                   csound->DebugMsg(csound, "csound_pre(%d): line now %d at %d\n",
                                    __LINE__,
                                    csound_preget_lineno(yyscanner),
@@ -497,6 +509,12 @@ QNAN            "qnan"[ \t]*\(
                   //print_csound_predata(csound,"Before pre_line", yyscanner);
                   csound_pre_line(csound, csound->orchstr, yyscanner);
                   //print_csound_predata(csound,"After pre_line", yyscanner);
+                  if (PARM->alt_stack[PARM->macro_stack_ptr].included) {
+                    char bb[80];
+                    snprintf(bb, 80, "\n#line   %d\n",
+                            PARM->alt_stack[PARM->macro_stack_ptr].line);
+                    corfile_puts(csound, bb, csound->expanded_orc);
+                  }
                 }
 {DEFINE}        {
                   if (PARM->isString != 1)
@@ -594,83 +612,83 @@ QNAN            "qnan"[ \t]*\(
                                          yyscanner);
                     corfile_putc(csound, '\n', csound->expanded_orc);
                     csound_pre_line(csound, csound->expanded_orc, yyscanner);
-                    mfree(csound, pp);
+                    csoundFree(csound, pp);
                   }
                   else {
                     corfile_puts(csound, yytext, csound->expanded_orc);
                   }
 }
 {IDENT}         { corfile_puts(csound, yytext,csound->expanded_orc); }
-{INT}           { do_function(csound, yytext,csound->expanded_orc); }
-{FRAC}          { do_function(csound, yytext,csound->expanded_orc); }
-{ROUND}         { do_function(csound, yytext,csound->expanded_orc); }
-{FLOOR}         { do_function(csound, yytext,csound->expanded_orc); }
-{CEIL}          { do_function(csound, yytext,csound->expanded_orc); }
-{RND}           { do_function(csound, yytext,csound->expanded_orc); }
-{BIRND}         { do_function(csound, yytext,csound->expanded_orc); }
-{ABS}           { do_function(csound, yytext,csound->expanded_orc); }
-{EXP}           { do_function(csound, yytext,csound->expanded_orc); }
-{LOG}           { do_function(csound, yytext,csound->expanded_orc); }
-{SQRT}          { do_function(csound, yytext,csound->expanded_orc); }
-{SIN}           { do_function(csound, yytext,csound->expanded_orc); }
-{COS}           { do_function(csound, yytext,csound->expanded_orc); }
-{TAN}           { do_function(csound, yytext,csound->expanded_orc); }
-{SININV}        { do_function(csound, yytext,csound->expanded_orc); }
-{COSINV}        { do_function(csound, yytext,csound->expanded_orc); }
-{TANINV}        { do_function(csound, yytext,csound->expanded_orc); }
-{LOG10}         { do_function(csound, yytext,csound->expanded_orc); }
-{LOG2}          { do_function(csound, yytext,csound->expanded_orc); }
-{SINH}          { do_function(csound, yytext,csound->expanded_orc); }
-{COSH}          { do_function(csound, yytext,csound->expanded_orc); }
-{TANH}          { do_function(csound, yytext,csound->expanded_orc); }
-{AMPDB}         { do_function(csound, yytext,csound->expanded_orc); }
-{AMPDBFS}       { do_function(csound, yytext,csound->expanded_orc); }
-{DBAMP}         { do_function(csound, yytext,csound->expanded_orc); }
-{DBFSAMP}       { do_function(csound, yytext,csound->expanded_orc); }
-{FTCPS}         { do_function(csound, yytext,csound->expanded_orc); }
-{FTLEN}         { do_function(csound, yytext,csound->expanded_orc); }
-{FTSR}          { do_function(csound, yytext,csound->expanded_orc); }
-{FTLPTIM}       { do_function(csound, yytext,csound->expanded_orc); }
-{FTCHNLS}       { do_function(csound, yytext,csound->expanded_orc); }
-{I}             { do_function(csound, yytext,csound->expanded_orc); }
-{K}             { do_function(csound, yytext,csound->expanded_orc); }
-{CPSOCT}        { do_function(csound, yytext,csound->expanded_orc); }
-{OCTPCH}        { do_function(csound, yytext,csound->expanded_orc); }
-{CPSPCH}        { do_function(csound, yytext,csound->expanded_orc); }
-{PCHOCT}        { do_function(csound, yytext,csound->expanded_orc); }
-{OCTCPS}        { do_function(csound, yytext,csound->expanded_orc); }
-{NSAMP}         { do_function(csound, yytext,csound->expanded_orc); }
-{POWOFTWO}      { do_function(csound, yytext,csound->expanded_orc); }
-{LOGBTWO}       { do_function(csound, yytext,csound->expanded_orc); }
-{A}             { do_function(csound, yytext,csound->expanded_orc); }
-{TB0}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB1}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB2}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB3}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB4}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB5}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB6}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB7}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB8}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB9}           { do_function(csound, yytext,csound->expanded_orc); }
-{TB10}          { do_function(csound, yytext,csound->expanded_orc); }
-{TB11}          { do_function(csound, yytext,csound->expanded_orc); }
-{TB12}          { do_function(csound, yytext,csound->expanded_orc); }
-{TB13}          { do_function(csound, yytext,csound->expanded_orc); }
-{TB14}          { do_function(csound, yytext,csound->expanded_orc); }
-{TB15}          { do_function(csound, yytext,csound->expanded_orc); }
-{URD}           { do_function(csound, yytext,csound->expanded_orc); }
-{NOT}           { do_function(csound, yytext,csound->expanded_orc); }
-{CENT}          { do_function(csound, yytext,csound->expanded_orc); }
-{OCTAVE}        { do_function(csound, yytext,csound->expanded_orc); }
-{SEMITONE}      { do_function(csound, yytext,csound->expanded_orc); }
-{CPSMIDIN}      { do_function(csound, yytext,csound->expanded_orc); }
-{OCTMIDIN}      { do_function(csound, yytext,csound->expanded_orc); }
-{PCHMIDIN}      { do_function(csound, yytext,csound->expanded_orc); }
-{DB}            { do_function(csound, yytext,csound->expanded_orc); }
-{P}             { do_function(csound, yytext,csound->expanded_orc); }
-{QINF}          { do_function(csound, yytext,csound->expanded_orc); }
-{QNAN}          { do_function(csound, yytext,csound->expanded_orc); }
+{INT}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{FRAC}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{ROUND}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{FLOOR}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{CEIL}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{RND}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{BIRND}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{ABS}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{EXP}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{LOG}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{SQRT}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{SIN}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{COS}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TAN}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{SININV}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{COSINV}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TANINV}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{LOG10}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{LOG2}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{SINH}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{COSH}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TANH}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{AMPDB}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{AMPDBFS}       { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{DBAMP}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{DBFSAMP}       { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{FTCPS}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{FTLEN}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{FTSR}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{FTLPTIM}       { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{FTCHNLS}       { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{I}             { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{K}             { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{CPSOCT}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{OCTPCH}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{CPSPCH}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{PCHOCT}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{OCTCPS}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{NSAMP}         { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{POWOFTWO}      { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{LOGBTWO}       { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{A}             { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB0}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB1}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB2}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB3}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB4}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB5}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB6}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB7}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB8}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB9}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB10}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB11}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB12}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB13}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB14}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{TB15}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{URD}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{NOT}           { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{CENT}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{OCTAVE}        { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{SEMITONE}      { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{CPSMIDIN}      { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{OCTMIDIN}      { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{PCHMIDIN}      { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{DB}            { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{P}             { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{QINF}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
+{QNAN}          { do_function(csound, yytext, csound->expanded_orc, PARM->isString); }
 
 .               { corfile_putc(csound, yytext[0], csound->expanded_orc); }
 
@@ -680,14 +698,16 @@ void comment(yyscan_t yyscanner)              /* Skip until nextline */
     char c;
     struct yyguts_t *yyg = (struct yyguts_t*)yyscanner;
     while ((c = input(yyscanner)) != '\n' && c != '\r') { /* skip */
-      if (UNLIKELY((int)c == EOF || c == '\0')) {
+      int cc = (int) c;
+      if (UNLIKELY(cc == EOF || c == '\0')) {
         YY_CURRENT_BUFFER_LVALUE->yy_buffer_status =
           YY_BUFFER_EOF_PENDING;
         return;
       }
     }
     if (c == '\r' && (c = input(yyscanner)) != '\n') {
-      if (LIKELY((int)c != EOF && c != '\0'))
+      int cc = (int) c;
+      if (LIKELY(cc != EOF && c != '\0'))
         unput(c);
       else
         YY_CURRENT_BUFFER_LVALUE->yy_buffer_status =
@@ -767,14 +787,6 @@ void do_include(CSOUND *csound, int term, yyscan_t yyscanner)
     csound_preset_lineno(1+csound_preget_lineno(yyscanner), yyscanner);
     csound->DebugMsg(csound,"line %d at end of #include line\n",
                      csound_preget_lineno(yyscanner));
-    {
-      uint8_t n = file_to_int(csound, buffer);
-      char bb[128];
-      PARM->lstack[PARM->depth] = n;
-      sprintf(bb, "#source %"PRIu64"\n", PARM->locn = make_location(PARM));
-      PARM->llocn = PARM->locn;
-      corfile_puts(csound, bb, csound->expanded_orc);
-    }
     csound->DebugMsg(csound,"reading included file \"%s\"\n", buffer);
     if (UNLIKELY(isDir(buffer)))
       csound->Warning(csound, Str("%s is a directory; not including"), buffer);
@@ -788,9 +800,28 @@ void do_include(CSOUND *csound, int term, yyscan_t yyscanner)
           cf = copy_to_corefile(csound, buffer, "INCDIR", 0);
     }
     else cf = copy_to_corefile(csound, buffer, "INCDIR", 0);
-    if (UNLIKELY(cf == NULL))
+    if (UNLIKELY(cf == NULL)) {
+#if defined(__wasi__)
+      csound->Message(csound,
+                      Str("Cannot open #include'd file %s\n"), buffer);
+      csound->synterrcnt++;
+      if (PARM->depth > 0) {
+        PARM->depth--;
+      }
+      return;
+#else
       csound->Die(csound,
                   Str("Cannot open #include'd file %s\n"), buffer);
+#endif
+    }
+    {
+      uint8_t n = file_to_int(csound, buffer);
+      char bb[128];
+      PARM->lstack[PARM->depth] = n;
+      snprintf(bb, 80, "#source %"PRIu64"\n", PARM->locn = make_location(PARM)) ;
+      PARM->llocn = PARM->locn;
+      corfile_puts(csound, bb, csound->expanded_orc);
+    }
     if (UNLIKELY(PARM->macro_stack_ptr +1 >= PARM->macro_stack_size )) {
       PARM->alt_stack =
         (MACRON*) csound->ReAlloc(csound, PARM->alt_stack,
@@ -808,12 +839,13 @@ void do_include(CSOUND *csound, int term, yyscan_t yyscanner)
     PARM->alt_stack[PARM->macro_stack_ptr].line = csound_preget_lineno(yyscanner);
     if (strrchr(buffer,DIRSEP)) {
       PARM->alt_stack[PARM->macro_stack_ptr].path = PARM->path;
-      printf("setting path from %s to ", PARM->path);
       PARM->path = strdup(buffer); /* wasteful! */
       *(strrchr(PARM->path,DIRSEP)) = '\0';
-      printf("%s\n",PARM->path);
+      csound->DebugMsg(csound, "setting path from %s to %s",
+                       PARM->alt_stack[PARM->macro_stack_ptr].path, PARM->path);
     }
     else PARM->alt_stack[PARM->macro_stack_ptr].path = NULL;
+    PARM->alt_stack[PARM->macro_stack_ptr].included = 1;
     PARM->alt_stack[PARM->macro_stack_ptr++].s = NULL;
     csound_prepush_buffer_state(YY_CURRENT_BUFFER, yyscanner);
     csound_pre_scan_string(cf->body, yyscanner);
@@ -844,14 +876,6 @@ void  do_new_include(CSOUND *csound, yyscan_t yyscanner)
     csound_preset_lineno(1+csound_preget_lineno(yyscanner), yyscanner);
     csound->DebugMsg(csound,"line %d at end of #include line\n",
                      csound_preget_lineno(yyscanner));
-    {
-      uint8_t n = file_to_int(csound, buffer);
-      char bb[128];
-      PARM->lstack[PARM->depth] = n;
-      sprintf(bb, "#source %"PRIu64"\n", PARM->locn = make_location(PARM));
-      PARM->llocn = PARM->locn;
-      corfile_puts(csound, bb, csound->expanded_orc);
-    }
     csound->DebugMsg(csound,"reading included file \"%s\"\n", buffer);
     if (UNLIKELY(isDir(buffer)))
       csound->Warning(csound, Str("%s is a directory; not including"), buffer);
@@ -863,9 +887,28 @@ void  do_new_include(CSOUND *csound, yyscan_t yyscanner)
       cf = copy_to_corefile(csound, tmp, "INCDIR", 0);
     }
     else cf = copy_to_corefile(csound, buffer, "INCDIR", 0);
-    if (UNLIKELY(cf == NULL))
+    if (UNLIKELY(cf == NULL)) {
+#if defined(__wasi__)
+      csound->Message(csound,
+                      Str("Cannot open #include'd file %s\n"), buffer);
+      csound->synterrcnt++;
+      if (PARM->depth > 0) {
+        PARM->depth--;
+      }
+      return;
+#else
       csound->Die(csound,
                   Str("Cannot open #include'd file %s\n"), buffer);
+#endif
+    }
+    {
+      uint8_t n = file_to_int(csound, buffer);
+      char bb[128];
+      PARM->lstack[PARM->depth] = n;
+      snprintf(bb, 128, "#source %"PRIu64"\n", PARM->locn = make_location(PARM));
+      PARM->llocn = PARM->locn;
+      corfile_puts(csound, bb, csound->expanded_orc);
+    }
     if (UNLIKELY(PARM->macro_stack_ptr +1 >= PARM->macro_stack_size )) {
       PARM->alt_stack =
         (MACRON*) csound->ReAlloc(csound, PARM->alt_stack,
@@ -887,6 +930,7 @@ void  do_new_include(CSOUND *csound, yyscan_t yyscanner)
       *(strrchr(PARM->path,DIRSEP)) = '\0';
     }
     else PARM->alt_stack[PARM->macro_stack_ptr].path = NULL;
+    PARM->alt_stack[PARM->macro_stack_ptr].included = 1;
     PARM->alt_stack[PARM->macro_stack_ptr++].s = NULL;
     csound_prepush_buffer_state(YY_CURRENT_BUFFER, yyscanner);
     csound_pre_scan_string(cf->body, yyscanner);
@@ -1029,7 +1073,7 @@ static void do_macro_arg(CSOUND *csound, char *name0, yyscan_t yyscanner)
       if (UNLIKELY(c == EOF || c == '\0'))
         csound->Die(csound, Str("define macro with args: unexpected EOF"));
       if (c=='$') {             /* munge macro name? */
-        int n = strlen(name0)+4;
+        int32_t n = (int32_t) strlen(name0)+4;
         if (UNLIKELY(i+n >= size)) {
           mm->body = csound->ReAlloc(csound, mm->body, size += 100);
           if (UNLIKELY(mm->body == NULL)) {
@@ -1168,10 +1212,10 @@ static void do_umacro(CSOUND *csound, char *name0, yyscan_t yyscanner)
     csound->DebugMsg(csound, "macro %s undefined\n", name0);
     if (strcmp(name0, csound->orc_macros->name)==0) {
       MACRO *mm=csound->orc_macros->next;
-      mfree(csound, csound->orc_macros->name); mfree(csound, csound->orc_macros->body);
+      csoundFree(csound, csound->orc_macros->name); csoundFree(csound, csound->orc_macros->body);
       for (i=0; i<csound->orc_macros->acnt; i++)
-        mfree(csound, csound->orc_macros->arg[i]);
-      mfree(csound, csound->orc_macros); csound->orc_macros = mm;
+        csoundFree(csound, csound->orc_macros->arg[i]);
+      csoundFree(csound, csound->orc_macros); csound->orc_macros = mm;
     }
     else {
       MACRO *mm = csound->orc_macros;
@@ -1183,10 +1227,10 @@ static void do_umacro(CSOUND *csound, char *name0, yyscan_t yyscanner)
           csound->LongJmp(csound, 1);
         }
       }
-      mfree(csound, nn->name); mfree(csound, nn->body);
+      csoundFree(csound, nn->name); csoundFree(csound, nn->body);
       for (i=0; i<nn->acnt; i++)
-        mfree(csound, nn->arg[i]);
-      mm->next = nn->next; mfree(csound, nn);
+        csoundFree(csound, nn->arg[i]);
+      mm->next = nn->next; csoundFree(csound, nn);
     }
     while ((c=input(yyscanner)) != '\n' &&
            c != EOF && c != '\r'); /* ignore rest of line */
@@ -1200,10 +1244,10 @@ static void do_umacroq(CSOUND *csound, char *name0, yyscan_t yyscanner)
     while (mm) {
       if (strcmp(name0, mm->name)==0) {
         MACRO *nn=mm->next;
-        mfree(csound, mm->name); mfree(csound, mm->body);
+        csoundFree(csound, mm->name); csoundFree(csound, mm->body);
         for (i=0; i<mm->acnt; i++)
-          mfree(csound, mm->arg[i]);
-        mfree(csound, mm);
+          csoundFree(csound, mm->arg[i]);
+        csoundFree(csound, mm);
         if (last) last->next = nn;
         else csound->orc_macros = nn;
         return;
@@ -1272,7 +1316,7 @@ static void do_ifdef_skip_code(CSOUND *csound, yyscan_t yyscanner)
         if (strcmp("end", buf) == 0 || strcmp("endif", buf) == 0) {
           if (nested_ifdef-- == 0) {
             PARM->ifdefStack = pp->prv;
-            mfree(csound, pp);
+            csoundFree(csound, pp);
             break;
           }
         }
@@ -1315,7 +1359,7 @@ static void add_math_const_macro(CSOUND *csound, char * name, char *body)
 
     mm = (MACRO*) csound->Calloc(csound, sizeof(MACRO));
     mm->name = (char*) csound->Calloc(csound, strlen(name) + 3);
-    sprintf(mm->name, "M_%s", name);
+    snprintf(mm->name, strlen(name) + 3, "M_%s", name);
     mm->next = csound->orc_macros;
     csound->orc_macros = mm;
     mm->margs = MARGS;    /* Initial size */
@@ -1329,6 +1373,8 @@ static void add_math_const_macro(CSOUND *csound, char * name, char *body)
  */
 void cs_init_math_constants_macros(CSOUND *csound)
 {
+    char buf[64];
+
     if (csound->orc_macros == NULL) {
       add_math_const_macro(csound, "E",     "2.71828182845904523536");
       add_math_const_macro(csound, "LOG2E", "1.44269504088896340736");
@@ -1344,6 +1390,12 @@ void cs_init_math_constants_macros(CSOUND *csound)
       add_math_const_macro(csound, "SQRT2", "1.41421356237309504880");
       add_math_const_macro(csound, "SQRT1_2","0.70710678118654752440");
       add_math_const_macro(csound, "INF",   "800000000000.0");/* ~25367 years */
+
+      /* cs_float limits - use standard library macros converted to strings */
+      snprintf(buf, sizeof(buf), "%.17g", CS_FLOAT_MAX);
+      add_math_const_macro(csound, "MAX_VALUE", buf);
+      snprintf(buf, sizeof(buf), "%.17g", CS_FLOAT_MIN);
+      add_math_const_macro(csound, "MIN_VALUE", buf);
     }
 }
 
@@ -1386,7 +1438,7 @@ void cs_init_omacros(CSOUND *csound, NAMES *nn)
         csound->orc_macros = mm;
       }
       else
-        mfree(csound, mname);
+        csoundFree(csound, mname);
       mm->margs = MARGS;    /* Initial size */
       mm->acnt = 0;
       if (*p != '\0')
@@ -1416,25 +1468,27 @@ void csound_pre_line(CSOUND *csound, CORFIL* cf, void *yyscanner)
       uint64_t llocn = PARM->llocn;
       if (UNLIKELY(locn != llocn)) {
         char bb[80];
-        sprintf(bb, "#source %"PRIu64"\n", locn);
+        snprintf(bb, 80, "#source %"PRIu64"\n", locn);
         corfile_puts(csound, bb, cf);
       }
       PARM->llocn = locn;
       if (UNLIKELY(n!=PARM->line+1)) {
         char bb[80];
-        sprintf(bb, "#line   %d\n", n);
+        snprintf(bb, 80, "#line   %d\n", n);
         corfile_puts(csound, bb, cf);
       }
     }
     PARM->line = n;
 }
 
-void do_function(CSOUND *csound, char *text, CORFIL *cf)
+static void do_function(CSOUND *csound, char *text, CORFIL *cf,
+                        int32_t isString)
 {
     char *p = text;
     //printf("do_function on >>%s<<\n", text);
     while (*p != '\0') {
-      if (!isspace(*p)) corfile_putc(csound, *p, cf);
+      if (isString || !isspace((unsigned char) *p))
+        corfile_putc(csound, *p, cf);
       p++;
     }
     return;

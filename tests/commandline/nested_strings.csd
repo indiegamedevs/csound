@@ -1,3 +1,9 @@
+<CsTest>
+description = "test nested strings works with schedule [issue #861]"
+
+[expect]
+exit = 0
+</CsTest>
 <CsoundSynthesizer>
 <CsOptions>
 </CsOptions>
@@ -31,9 +37,9 @@ chnclear "outRight"
 endin
 }}
 
-schedule 1, 2, 1, {{
-schedule 10, 0, -1
-}}
+
+schedule 1, 2, 1, "schedule 10, 0, -1"
+
 
 
 schedule 1, 3, 1, {{

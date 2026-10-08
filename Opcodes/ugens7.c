@@ -1,25 +1,25 @@
 /*
-    ugens7.c:
+  ugens7.c:
 
-    Copyright (C) 1995 J. Michael Clarke, based on ideas from CHANT (IRCAM),
-                       Barry Vercoe, John ffitch
+  Copyright (C) 1995 J. Michael Clarke, based on ideas from CHANT (IRCAM),
+  Barry Vercoe, John ffitch
+  float phase version: (C) 2024 Victor Lazzarini 
 
-    This file is part of Csound.
+  This file is part of Csound.
 
-    The Csound Library is free software; you can redistribute it
-    and/or modify it under the terms of the GNU Lesser General Public
-    License as published by the Free Software Foundation; either
-    version 2.1 of the License, or (at your option) any later version.
+  The Csound Library is free software; you can redistribute it
+  and/or modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
 
-    Csound is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU Lesser General Public License for more details.
+  Csound is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU Lesser General Public License for more details.
 
-    You should have received a copy of the GNU Lesser General Public
-    License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+  You should have received a copy of the GNU Lesser General Public
+  License along with Csound; if not, write to the Free Software
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "stdopcod.h"               /*                      UGENS7.C        */
@@ -28,108 +28,163 @@
 
 /* loosely based on code of Michael Clarke, University of Huddersfield */
 
-static   int32_t    newpulse(CSOUND *, FOFS *, OVRLAP *, MYFLT *, MYFLT *, MYFLT *);
+static   int32_t    newpulse(CSOUND *, FOFS *, OVRLAP *, const cs_float *, const cs_float *, const cs_float *);
 
 static int32_t fofset0(CSOUND *csound, FOFS *p, int32_t flag)
 {
-    int32_t skip = (*p->iskip != FL(0.0) && p->auxch.auxp != 0);
-    if (LIKELY((p->ftp1 = csound->FTFind(csound, p->ifna)) != NULL &&
-               (p->ftp2 = csound->FTFind(csound, p->ifnb)) != NULL)) {
-      OVRLAP *ovp, *nxtovp;
-      int32  olaps;
-      p->durtogo = (int32)(*p->itotdur * CS_ESR);
-      if (!skip) { /* legato: skip all memory management */
+  int32_t skip = (*p->iskip != FL(0.0) && p->auxch.auxp != 0);
+  if (LIKELY((p->ftp1 = csound->FTFind(csound, p->ifna)) != NULL &&
+             (p->ftp2 = csound->FTFind(csound, p->ifnb)) != NULL)) {  
+    OVRLAP *ovp, *nxtovp;
+    int32  olaps;
+    // VL 22.03.24 check len to set float phase flag
+    if(IS_POW_TWO(p->ftp1->flen) && IS_POW_TWO(p->ftp2->flen))
+      p->floatph = 0;
+    else p->floatph = 1;
+ 
+    p->durtogo = (int32)(*p->itotdur * CS_ESR);
+    if (!skip) { /* legato: skip all memory management */
+      if(!p->floatph) {
         if (*p->iphs == FL(0.0))                /* if fundphs zero,  */
           p->fundphs = MAXLEN;                  /*   trigger new FOF */
         else p->fundphs = (int32)(*p->iphs * FMAXLEN) & PHMASK;
-        if (UNLIKELY((olaps = (int32)*p->iolaps) <= 0)) {
-          return csound->InitError(csound, Str("illegal value for iolaps"));
-        }
-        if (*p->iphs >= FL(0.0))
-          csound->AuxAlloc(csound, (size_t)olaps * sizeof(OVRLAP), &p->auxch);
-        ovp = &p->basovrlap;
-        nxtovp = (OVRLAP *) p->auxch.auxp;
-        do {
-          ovp->nxtact = NULL;
-          ovp->nxtfree = nxtovp;                /* link the ovlap spaces */
-          ovp = nxtovp++;
-        } while (--olaps);
+        p->fundphsf = 0.;
+      } else {
+        if (*p->iphs == FL(0.0))                /* if fundphs zero,  */
+          p->fundphsf = 1.;                  /*   trigger new FOF */
+        else p->fundphsf = PHMOD1(*p->iphs);
+        p->fundphs = 0;
+      }
+      if (UNLIKELY((olaps = (int32)*p->iolaps) <= 0)) {
+        return csound->InitError(csound, "%s", Str("illegal value for iolaps"));
+      }
+      if (*p->iphs >= FL(0.0) || p->auxch.auxp == NULL ||
+          p->auxch.size < (size_t)olaps * sizeof(OVRLAP))
+        csound->AuxAlloc(csound, (size_t)olaps * sizeof(OVRLAP), &p->auxch);
+      ovp = &p->basovrlap;
+      nxtovp = (OVRLAP *) p->auxch.auxp;
+      do {
         ovp->nxtact = NULL;
-        ovp->nxtfree = NULL;
-        p->fofcount = -1;
-        p->prvband = FL(0.0);
-        p->expamp = FL(1.0);
-        p->prvsmps = (int32)0;
-        p->preamp = FL(1.0);
-      } /* end of legato code */
-      p->ampcod   = IS_ASIG_ARG(p->xamp) ? 1 : 0;
-      p->fundcod  = IS_ASIG_ARG(p->xfund) ? 1 : 0;
-      p->formcod  = IS_ASIG_ARG(p->xform) ? 1 : 0;
-      p->xincod   = p->ampcod || p->fundcod || p->formcod;
-      if (flag)
-        p->fmtmod = (*p->ifmode == FL(0.0)) ? 0 : 1;
-    }
-    else return NOTOK;
-    p->foftype = flag;
-    return OK;
+        ovp->nxtfree = nxtovp;                /* link the ovlap spaces */
+        ovp = nxtovp++;
+      } while (--olaps);
+      ovp->nxtact = NULL;
+      ovp->nxtfree = NULL;
+      p->fofcount = -1;
+      p->prvband = FL(0.0);
+      p->expamp = FL(1.0);
+      p->prvsmps = (int32)0;
+      p->preamp = FL(1.0);
+    } /* end of legato code */
+    p->ampcod   = IS_ASIG_ARG(p->xamp) ? 1 : 0;
+    p->fundcod  = IS_ASIG_ARG(p->xfund) ? 1 : 0;
+    p->formcod  = IS_ASIG_ARG(p->xform) ? 1 : 0;
+    p->xincod   = p->ampcod || p->fundcod || p->formcod;
+    if (flag)
+      p->fmtmod = (*p->ifmode == FL(0.0)) ? 0 : 1;
+  }
+  else return NOTOK;
+  p->foftype = flag;
+  return OK;
 }
 
 static int32_t fofset(CSOUND *csound, FOFS *p)
 {
-    return fofset0(csound, p, 1);
+  return fofset0(csound, p, 1);
 }
 
 static int32_t fofset2(CSOUND *csound, FOFS *p)
 {
-    return fofset0(csound, p, 0);
+  return fofset0(csound, p, 0);
 }
+
 
 static int32_t fof(CSOUND *csound, FOFS *p)
 {
-    OVRLAP  *ovp;
-    FUNC    *ftp1,  *ftp2;
-    MYFLT   *ar, *amp, *fund, *form;
-    uint32_t offset = p->h.insdshead->ksmps_offset;
-    uint32_t early  = p->h.insdshead->ksmps_no_end;
-    uint32_t n, nsmps = CS_KSMPS;
-    int32   fund_inc, form_inc;
-    MYFLT   v1, fract ,*ftab;
+  OVRLAP  *ovp;
+  FUNC    *ftp1,  *ftp2;
+  cs_float   *ar, *amp, *fund, *form;
+  uint32_t offset = p->h.insdshead->ksmps_offset;
+  uint32_t early  = p->h.insdshead->ksmps_no_end;
+  uint32_t n, nsmps = CS_KSMPS;
+  int32   fund_inc = 0, form_inc = 0, floatph = p->floatph;
+  cs_double  form_incf = 0.0, fund_incf = 0.0;
+  cs_float   v1, fract ,*ftab;
 
-    if (UNLIKELY(p->auxch.auxp==NULL)) goto err1; /* RWD fix */
-    ar = p->ar;
-    amp = p->xamp;
-    fund = p->xfund;
-    form = p->xform;
-    ftp1 = p->ftp1;
-    ftp2 = p->ftp2;
-    fund_inc = (int32)(*fund * csound->sicvt);
-    if (UNLIKELY(offset)) memset(ar, '\0', offset*sizeof(MYFLT));
-    if (UNLIKELY(early)) {
-      nsmps -= early;
-      memset(&ar[nsmps], '\0', early*sizeof(MYFLT));
-    }
-    form_inc = (int32)(*form * csound->sicvt);
-    for (n=offset; n<nsmps; n++) {
-      if (p->fundphs & MAXLEN) {               /* if phs has wrapped */
+  if (UNLIKELY(p->auxch.auxp==NULL)) goto err1; /* RWD fix */
+  ar = p->ar;
+  amp = p->xamp;
+  fund = p->xfund;
+  form = p->xform;
+  ftp1 = p->ftp1;
+  ftp2 = p->ftp2;
+  
+  
+  if (UNLIKELY(offset)) memset(ar, '\0', offset*sizeof(cs_float));
+  if (UNLIKELY(early)) {
+    nsmps -= early;
+    memset(&ar[nsmps], '\0', early*sizeof(cs_float));
+  }
+  if(floatph) {
+    form_incf = *form * CS_ONEDSR;
+    fund_incf = *fund * CS_ONEDSR;
+  }
+  else {
+    form_inc = (int32)(*form * CS_SICVT);
+    fund_inc = (int32)(*fund * CS_SICVT);
+  }
+  for (n=offset; n<nsmps; n++) {
+    if (p->fundphs & MAXLEN ||
+        p->fundphsf >= 1.) {
+      /* if phs has wrapped */
+      if (floatph) 
+        p->fundphsf = PHMOD1(p->fundphsf);
+      else 
         p->fundphs &= PHMASK;
-        if ((ovp = p->basovrlap.nxtfree) == NULL) goto err2;
-        if (newpulse(csound, p, ovp, amp, fund, form)) {   /* init new fof */
-          ovp->nxtact = p->basovrlap.nxtact;     /* & link into  */
-          p->basovrlap.nxtact = ovp;             /*   actlist    */
-          p->basovrlap.nxtfree = ovp->nxtfree;
-        }
+      
+      if ((ovp = p->basovrlap.nxtfree) == NULL) goto err2;
+      int32_t pulse = newpulse(csound, p, ovp, amp, fund, form);
+      if (UNLIKELY(pulse < 0)) goto err3;
+      if (pulse) {                                  /* init new fof */
+        ovp->nxtact = p->basovrlap.nxtact;     /* & link into  */
+        p->basovrlap.nxtact = ovp;             /*   actlist    */
+        p->basovrlap.nxtfree = ovp->nxtfree;
       }
-      ar[n] = FL(0.0);
-      ovp = &p->basovrlap;
-      while (ovp->nxtact != NULL) {         /* perform cur actlist:  */
-        MYFLT  result;
-        OVRLAP *prvact = ovp;
-        ovp = ovp->nxtact;                   /*  formant waveform  */
+    }
+    ar[n] = FL(0.0);
+    ovp = &p->basovrlap;
+    while (ovp->nxtact != NULL) {         /* perform cur actlist:  */
+      cs_float  result;
+      OVRLAP *prvact = ovp;
+      ovp = ovp->nxtact;                   /*  formant waveform  */
+      if(floatph) {
+        cs_double formphsf = ovp->formphsf;
+        cs_double frac = formphsf - (int32_t) formphsf;
+        ftab = ftp1->ftable + (size_t) (formphsf * ftp1->flen);
+        v1 = *ftab++;  
+        result = v1 + (*ftab - v1) * frac;
+        if (p->foftype) {
+          if (p->fmtmod)
+            formphsf += form_incf;           /* inc phs on mode */
+          else formphsf += ovp->formincf;
+        } else 
+          formphsf += (ovp->formincf + ovp->glissbas * ovp->sampct++);
+        ovp->formphsf = PHMOD1(formphsf);
+        if (ovp->risphsf < 1.) {             /*  formant ris envlp */
+          result *= *(ftp2->ftable + (size_t) (ovp->risphsf * ftp2->flen));
+          ovp->risphsf += ovp->risincf;
+        }
+        if (ovp->timrem <= ovp->dectim) {       /*  formant dec envlp */
+          result *= *(ftp2->ftable + (size_t) (ovp->decphsf * ftp2->flen));
+          if ((ovp->decphsf -= ovp->decincf) < 0.)
+            ovp->decphsf = 0.;
+        } 
+      } else {
         fract = PFRAC1(ovp->formphs);        /* from JMC Fog*/
         ftab = ftp1->ftable + (ovp->formphs >> ftp1->lobits);/*JMC Fog*/
         v1 = *ftab++;                           /*JMC Fog*/
         result = v1 + (*ftab - v1) * fract;     /*JMC Fog*/
-/*              result = *(ftp1->ftable + (ovp->formphs >> ftp1->lobits) ); */
+        /*              result = *(ftp1->ftable + (ovp->formphs >> ftp1->lobits) ); */
         if (p->foftype) {
           if (p->fmtmod)
             ovp->formphs += form_inc;           /* inc phs on mode */
@@ -137,7 +192,7 @@ static int32_t fof(CSOUND *csound, FOFS *p)
         }
         else {
 #define kgliss ifmode
-          /* MYFLT ovp->glissbas = kgliss / grain length. ovp->sampct is
+          /* cs_float ovp->glissbas = kgliss / grain length. ovp->sampct is
              incremented each sample. We add glissbas * sampct to the
              pitch of grain at each a-rate pass (ovp->formphs is the
              index into ifna; ovp->forminc is the stepping factor that
@@ -154,164 +209,228 @@ static int32_t fof(CSOUND *csound, FOFS *p)
           if ((ovp->decphs -= ovp->decinc) < 0)
             ovp->decphs = 0;
         }
-        ar[n] += (result * ovp->curamp);        /*  add wavfrm to out */
-        if (--ovp->timrem)                      /*  if fof not expird */
-          ovp->curamp *= ovp->expamp;           /*   apply bw exp dec */
-        else {
-          prvact->nxtact = ovp->nxtact;         /*  else rm frm activ */
-          ovp->nxtfree = p->basovrlap.nxtfree;  /*  & ret spc to free */
-          p->basovrlap.nxtfree = ovp;
-          ovp = prvact;
-        }
       }
+      ar[n] += (result * ovp->curamp);        /*  add wavfrm to out */
+      if (--ovp->timrem)                      /*  if fof not expird */
+        ovp->curamp *= ovp->expamp;           /*   apply bw exp dec */
+      else {
+        prvact->nxtact = ovp->nxtact;         /*  else rm frm activ */
+        ovp->nxtfree = p->basovrlap.nxtfree;  /*  & ret spc to free */
+        p->basovrlap.nxtfree = ovp;
+        ovp = prvact;
+      }
+    }
+    if(floatph) {
+      p->fundphsf  += fund_incf;
+      if (p->xincod) {
+        if (p->ampcod)    amp++;
+        if (p->fundcod)   fund_incf = (*++fund * CS_ONEDSR);
+        if (p->formcod)   form_incf = (*++form * CS_ONEDSR);
+      }
+    }
+    else {
       p->fundphs += fund_inc;
       if (p->xincod) {
         if (p->ampcod)    amp++;
-        if (p->fundcod)   fund_inc = (int32)(*++fund * csound->sicvt);
-        if (p->formcod)   form_inc = (int32)(*++form * csound->sicvt);
+        if (p->fundcod)   fund_inc = (int32)(*++fund * CS_SICVT);
+        if (p->formcod)   form_inc = (int32)(*++form * CS_SICVT);
       }
-      p->durtogo--;
     }
-    return OK;
+    p->durtogo--;    
+  }
+  return OK;
  err1:
     return csound->PerfError(csound, &(p->h),
-                             Str("fof: not initialised"));
+                             "%s", Str("fof: not initialised"));
  err2:
     return csound->PerfError(csound, &(p->h),
-                             Str("FOF needs more overlaps"));
+                             "%s", Str("FOF needs more overlaps"));
+ err3:
+    return csound->PerfError(csound, &(p->h),
+                             "%s", Str("FOF rise time exceeds supported range"));
 }
 
 static int32_t newpulse(CSOUND *csound,
-                    FOFS *p, OVRLAP *ovp, MYFLT *amp, MYFLT *fund, MYFLT *form)
+                        FOFS *p, OVRLAP *ovp, const cs_float *amp, const cs_float *fund, const cs_float *form)
 {
-    MYFLT   octamp = *amp, oct;
-    int32   rismps, newexp = 0;
+  cs_float   octamp = *amp, oct;
+  int32   rismps, newexp = 0;
+  /* Keep the original sample-count rounding in single-precision builds. */
+  cs_float   grain_samples = *p->kdur * CS_ESR;
 
-    if ((ovp->timrem = (int32)(*p->kdur * CS_ESR)) > p->durtogo &&
-        (*p->iskip==FL(0.0))) /* ringtime */
+  if (!(grain_samples >= 1.0))
+    ovp->timrem = 1;
+  else if (grain_samples >= (INT32_MAX + 0.0))
+    ovp->timrem = INT32_MAX;
+  else
+    ovp->timrem = (int32) grain_samples;
+  if (ovp->timrem > p->durtogo &&
+      (*p->iskip==FL(0.0))) /* ringtime */
+    return(0);
+  if ((oct = *p->koct) > FL(0.0)) {                   /* octaviation */
+    int64_t ioct = oct >= (cs_float) INT64_MAX ? 64 : (int64_t) oct;
+    uint64_t bitpat = ioct < 64 ? (UINT64_C(1) << ioct) - 1 : UINT64_MAX;
+    uint64_t fofcount = (uint64_t) ++p->fofcount;
+    if (bitpat & fofcount)
       return(0);
-    if ((oct = *p->koct) > FL(0.0)) {                   /* octaviation */
-      int64_t csnt = -1;
-      int32 ioct = (int32)oct, bitpat = ~(csnt << ioct);
-      if (bitpat & ++p->fofcount)
-        return(0);
-      if ((bitpat += 1) & p->fofcount)
-        octamp *= (FL(1.0) + ioct - oct);
-    }
+    if (++bitpat & fofcount)
+      octamp *= (FL(1.0) + ioct - oct);
+  }
+  if(p->floatph) {
+    if (*fund == FL(0.0))                               /* formant phs */
+      ovp->formphsf = 0.;
+    else ovp->formphsf =  PHMOD1(p->fundphsf * *form / *fund);
+    ovp->formincf = (*form * CS_ONEDSR);
+  }
+  else{
     if (*fund == FL(0.0))                               /* formant phs */
       ovp->formphs = 0;
     else ovp->formphs = (int32)(p->fundphs * *form / *fund) & PHMASK;
-    ovp->forminc = (int32)(*form * csound->sicvt);
-    if (*p->kband != p->prvband) {                    /* bw: exp dec */
-      p->prvband = *p->kband;
-      p->expamp =  EXP(*p->kband * csound->mpidsr);
-      newexp = 1;
-    }
-    /* Init grain rise ftable phase. Negative kform values make
-       the kris (ifnb) initial index go negative and crash csound.
-       So insert another if-test with compensating code. */
-    if (*p->kris >= csound->onedsr && *form != FL(0.0)) {   /* init fnb ris */
+    ovp->forminc = (int32)(*form * CS_SICVT);
+  }
+    
+    
+  if (*p->kband != p->prvband) {                    /* bw: exp dec */
+    p->prvband = *p->kband;
+    p->expamp =  EXP(*p->kband * -CS_PIDSR);
+    newexp = 1;
+  }
+  /* Init grain rise ftable phase. Negative kform values make
+     the kris (ifnb) initial index go negative and crash csound.
+     So insert another if-test with compensating code. */
+  if (*p->kris >= CS_ONEDSR && *form != FL(0.0)) {   /* init fnb ris */
+    if(p->floatph) {
+      if (*form < FL(0.0) && ovp->formphsf != 0.)
+        ovp->risphsf = ((1. - ovp->formphsf) / -*form / *p->kris);
+      else {
+        ovp->risphsf = (ovp->formphsf / *form / *p->kris);
+        
+      }
+      ovp->risincf = (CS_ONEDSR / *p->kris);
+      cs_double rise_samples = 1. / ovp->risincf;
+      if (UNLIKELY(rise_samples > (INT32_MAX + 0.0)))
+        return NOTOK;
+      rismps = (int32_t) rise_samples;
+    } else {
       if (*form < FL(0.0) && ovp->formphs != 0)
         ovp->risphs = (int32)((MAXLEN - ovp->formphs) / -*form / *p->kris);
       else
         ovp->risphs = (int32)(ovp->formphs / *form / *p->kris);
-      ovp->risinc = (int32)(csound->sicvt / *p->kris);
+      ovp->risinc = (int32)(CS_SICVT / *p->kris);
+      if (UNLIKELY(ovp->risinc <= 0))
+        return NOTOK;
       rismps = MAXLEN / ovp->risinc;
     }
-    else {
-      ovp->risphs = MAXLEN;
-      rismps = 0;
-    }
-    if (newexp || rismps != p->prvsmps) {            /* if new params */
-      if ((p->prvsmps = rismps))                     /*   redo preamp */
-        p->preamp = csound->intpow(p->expamp, -rismps);
-      else p->preamp = FL(1.0);
-    }
-    ovp->curamp = octamp * p->preamp;                /* set startamp  */
-    ovp->expamp = p->expamp;
-    if ((ovp->dectim = (int32)(*p->kdec * CS_ESR)) > 0) /*  fnb dec  */
-      ovp->decinc = (int32)(csound->sicvt / *p->kdec);
+  }
+  else {
+    if(p->floatph) ovp->risphsf = 1.;
+    else ovp->risphs = MAXLEN;
+    rismps = 0;
+  }
+    
+  if (newexp || rismps != p->prvsmps) {            /* if new params */
+    if ((p->prvsmps = rismps))                     /*   redo preamp */
+      p->preamp = intpow(p->expamp, -rismps);
+    else p->preamp = FL(1.0);
+  }
+  ovp->curamp = octamp * p->preamp;                /* set startamp  */
+  ovp->expamp = p->expamp;
+
+  if(p->floatph) {
+    if ((ovp->dectim = (int32)(*p->kdec * CS_ESR)) > 0) 
+      ovp->decincf = (CS_ONEDSR / *p->kdec);
+    ovp->decphsf = PHMOD1(ovp->decphsf);
+  } else {
+    if ((ovp->dectim = (int32)(*p->kdec * CS_ESR)) > 0) 
+      ovp->decinc = (int32)(CS_SICVT / *p->kdec);
     ovp->decphs = PHMASK;
-    if (!p->foftype) {
-      /* Make fof take k-rate phase increment:
-         Add current iphs to initial form phase */
+  }
+ 
+  if (!p->foftype) {
+    /* Make fof take k-rate phase increment:
+       Add current iphs to initial form phase */
+    if(p->floatph) {
+      ovp->formphsf += *p->iphs;
+      ovp->formphsf = PHMOD1(ovp->formphsf);
+      ovp->glissbas = ovp->formincf * (cs_float)pow(2.0, (cs_double)*p->kgliss);
+      ovp->glissbas -= ovp->formincf;
+      ovp->glissbas /= ovp->timrem;
+    } else {
       ovp->formphs += (int32)(*p->iphs * FMAXLEN);           /*  krate phs */
       ovp->formphs &= PHMASK;
       /* Set up grain gliss increment: ovp->glissbas will be added to
          ovp->forminc at each pass in fof2. Thus glissbas must be
          equal to kgliss / grain playing time. Also make it harmonic,
          so integer kgliss can represent octaves (ie pow() call). */
-      ovp->glissbas = ovp->forminc * (MYFLT)pow(2.0, (double)*p->kgliss);
+      ovp->glissbas = ovp->forminc * (cs_float)pow(2.0, (cs_double)*p->kgliss);
       /* glissbas should be diff of start & end pitch*/
       ovp->glissbas -= ovp->forminc;
       ovp->glissbas /= ovp->timrem;
       ovp->sampct = 0;   /* Must be reset in case ovp was used before  */
     }
-    return(1);
+  }
+  return(1);
+}
+
+
+static int32_t harmset(CSOUND *csound, HARMON *p)
+{
+  cs_float minfrq = *p->ilowest;
+  if (UNLIKELY(minfrq < FL(64.0))) {
+    return csound->InitError(csound,  "%s", Str("Minimum frequency too low"));
+  }
+  if (p->auxch.auxp == NULL || minfrq < p->minfrq) {
+    int32 nbufs = (int32)(CS_EKR * FL(3.0) / minfrq) + 1;
+    int32 nbufsmps = nbufs * CS_KSMPS;
+    int32 maxprd = (int32)(CS_ESR / minfrq);
+    int32 totalsiz = nbufsmps * 5 + maxprd; /* Surely 5! not 4 */
+    /* printf("init: nbufs = %d; nbufsmps = %d; maxprd = %d; totalsiz = %d\n", */
+    /*        nbufs, nbufsmps, maxprd, totalsiz);       */
+    csound->AuxAlloc(csound, (size_t)totalsiz * sizeof(cs_float), &p->auxch);
+    p->bufp = (cs_float *) p->auxch.auxp;
+    p->midp = p->bufp + nbufsmps;        /* each >= maxprd * 3 */
+    p->bufq = p->midp + nbufsmps;
+    p->midq = p->bufq + nbufsmps;
+    p->autobuf = p->midq + nbufsmps;     /* size of maxprd */
+    p->nbufsmps = nbufsmps;
+    p->n2bufsmps = nbufsmps * 2;
+    p->lomaxdist = maxprd;
+    p->minfrq = minfrq;
+  }
+  if ((p->autoktim = (int32_t)/*CS_FLOAT2LONG*/(*p->iptrkprd * CS_EKR)) < 1)
+    p->autoktim = 1;
+  p->autokcnt = 1;              /* init for immediate autocorr attempt */
+  printf("ekr = %f iptrk = %f, autocnt = %d; autotim = %d\n",
+         CS_EKR, *p->iptrkprd, p->autokcnt, p->autoktim);
+  p->lsicvt = FL(65536.0) * CS_ONEDSR;
+  p->cpsmode = ((*p->icpsmode != FL(0.0)));
+  p->inp1 = p->bufp;
+  p->inp2 = p->midp;
+  p->inq1 = p->bufq;
+  p->inq2 = p->midq;
+  p->puls1 = NULL;
+  p->puls2 = NULL;
+  p->puls3 = NULL;
+  p->prvest = FL(0.0);
+  p->prvq = FL(0.0);
+  p->phase1 = 0;
+  p->phase2 = 0;
+#if 0
+  hrngflg = 0;
+  p->period = -1;
+#endif
+  return OK;
 }
 
 #if 0
 static int32_t hrngflg=0;
 #endif
-
-static int32_t harmset(CSOUND *csound, HARMON *p)
-{
-    MYFLT minfrq = *p->ilowest;
-    if (UNLIKELY(minfrq < FL(64.0))) {
-      return csound->InitError(csound, Str("Minimum frequency too low"));
-    }
-    if (p->auxch.auxp == NULL || minfrq < p->minfrq) {
-      int32 nbufs = (int32)(CS_EKR * FL(3.0) / minfrq) + 1;
-      int32 nbufsmps = nbufs * CS_KSMPS;
-      int32 maxprd = (int32)(CS_ESR / minfrq);
-      int32 totalsiz = nbufsmps * 5 + maxprd; /* Surely 5! not 4 */
-      /* printf("init: nbufs = %d; nbufsmps = %d; maxprd = %d; totalsiz = %d\n", */
-      /*        nbufs, nbufsmps, maxprd, totalsiz);       */
-      csound->AuxAlloc(csound, (size_t)totalsiz * sizeof(MYFLT), &p->auxch);
-      p->bufp = (MYFLT *) p->auxch.auxp;
-      p->midp = p->bufp + nbufsmps;        /* each >= maxprd * 3 */
-      p->bufq = p->midp + nbufsmps;
-      p->midq = p->bufq + nbufsmps;
-      p->autobuf = p->midq + nbufsmps;     /* size of maxprd */
-      p->nbufsmps = nbufsmps;
-      p->n2bufsmps = nbufsmps * 2;
-      p->lomaxdist = maxprd;
-      p->minfrq = minfrq;
-    }
-    if ((p->autoktim = (int32_t)/*MYFLT2LONG*/(*p->iptrkprd * CS_EKR)) < 1)
-      p->autoktim = 1;
-    p->autokcnt = 1;              /* init for immediate autocorr attempt */
-    printf("ekr = %f iptrk = %f, autocnt = %d; autotim = %d\n",
-           CS_EKR, *p->iptrkprd, p->autokcnt, p->autoktim);
-    p->lsicvt = FL(65536.0) * csound->onedsr;
-    p->cpsmode = ((*p->icpsmode != FL(0.0)));
-    p->inp1 = p->bufp;
-    p->inp2 = p->midp;
-    p->inq1 = p->bufq;
-    p->inq2 = p->midq;
-    p->puls1 = NULL;
-    p->puls2 = NULL;
-    p->puls3 = NULL;
-    p->prvest = FL(0.0);
-    p->prvq = FL(0.0);
-    p->phase1 = 0;
-    p->phase2 = 0;
-#if 0
-    hrngflg = 0;
-    p->period = -1;
-#endif
-    return OK;
-}
-
-#if 0
-static int32_t cycle = 0;
-#endif
 static int32_t harmon(CSOUND *csound, HARMON *p)
 {
-    MYFLT *src1, *src2, *src3, *inp1, *inp2, *outp;
-    MYFLT c1, c2, qval, *inq1, *inq2;
-    MYFLT sum, minval, *minqp = NULL, *minq1, *minq2, *endp;
-    MYFLT *pulstrt, lin1, lin2, lin3;
+    cs_float *src1, *src2, *src3, *inp1, *inp2, *outp;
+    cs_float c1, c2, qval, *inq1, *inq2;
+    cs_float sum, minval, *minqp = NULL, *minq1, *minq2, *endp;
+    cs_float *pulstrt, lin1, lin2, lin3;
     int32  cnt1, cnt2, cnt3;
     int32  nn, phase1, phase2, phsinc1, phsinc2, period;
     uint32_t offset = p->h.insdshead->ksmps_offset;
@@ -322,10 +441,10 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
 #if 0
     if (early || offset) printf("early=%d, offet=%d\n", early, offset);
 #endif
-    if (UNLIKELY(offset)) memset(outp, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(outp, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&outp[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&outp[nsmps], '\0', early*sizeof(cs_float));
     }
     inp1 = p->inp1;
     inp2 = p->inp2;
@@ -334,16 +453,16 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
     qval = p->prvq;
     if (*p->kest != p->prvest &&
         *p->kest != FL(0.0)) {    /* if new pitch estimate */
-      MYFLT estperiod = CS_ESR / *p->kest;
-      double b = 2.0 - cos((double)(*p->kest * csound->tpidsr));
-      p->c2 = (MYFLT)(b - sqrt(b*b - 1.0)); /*   recalc lopass coefs */
+      cs_float estperiod = CS_ESR / *p->kest;
+      cs_double b = 2.0 - cos((cs_double)(*p->kest * CS_TPIDSR));
+      p->c2 = (cs_float)(b - sqrt(b*b - 1.0)); /*   recalc lopass coefs */
       p->c1 = FL(1.0) - p->c2;
       p->prvest = *p->kest;
       p->estprd = estperiod;
       p->prvar = FL(0.0);
     }
     if (*p->kvar != p->prvar) {
-      MYFLT oneplusvar = FL(1.0) + *p->kvar;
+      cs_float oneplusvar = FL(1.0) + *p->kvar;
       /* prd window is prd +/- var int32_t */
       p->mindist = (int32)(p->estprd/oneplusvar);
 /*       if (p->mindist==0) p->mindist=1; */
@@ -365,9 +484,9 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
       *inq1++ = *inq2++ = qval;
     }
     if (!(--p->autokcnt)) {                   /* if time for new autocorr  */
-      MYFLT *mid1, *mid2, *src4;
-      MYFLT *autop, *maxp;
-      MYFLT dsum, dinv, win, windec, maxval;
+      cs_float *mid1, *mid2, *src4;
+      cs_float *autop, *maxp;
+      cs_float dsum, dinv, win, windec, maxval;
       int32  dist;
       //printf("AUTOCORRELATE min/max = %d,%d\n",p->mindist, p->maxdist);
       p->autokcnt = p->autoktim;
@@ -402,7 +521,7 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
         autop++;
       }
       //printf("**** maxval = %f ****\n", maxval);
-      period = p->mindist + maxp - p->autobuf;
+      period = (int32_t) (p->mindist + maxp - p->autobuf);
       if (period != p->period) {
 #if 0
         csound->Message(csound, "New period %d %d\n", period, p->period);
@@ -410,8 +529,8 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
         p->period = period;
         if (!p->cpsmode)
           p->lsicvt = FL(65536.0) / period;
-        p->pnt1 = (int32)((MYFLT)period * FL(0.2));
-        p->pnt2 = (int32)((MYFLT)period * FL(0.8));
+        p->pnt1 = (int32)((cs_float)period * FL(0.2));
+        p->pnt2 = (int32)((cs_float)period * FL(0.8));
         p->pnt3 = period;
         p->inc1 = FL(1.0) / p->pnt1;
         p->inc2 = FL(1.0) / (period - p->pnt2);
@@ -419,7 +538,7 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
     }
     else period = p->period;
 
-    minval = (MYFLT)HUGE_VAL;               /* Suitably large ! */
+    minval = (cs_float)HUGE_VAL;               /* Suitably large ! */
     minq2 = inq2 - period;                  /* srch the qbuf for minima */
     minq1 = minq2 - period;                 /* which are 1 period apart */
     endp = inq2;                            /* move srch over 1 period  */
@@ -432,9 +551,9 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
     }
     src1 = minqp - p->n2bufsmps;            /* get src equiv of 1st min  */
     if (period==0) {
-      csound->Warning(csound, Str("Period zero\n"));
+      csound->Warning(csound, "%s", Str("Period zero\n"));
       outp = p->ar;
-      memset(outp, 0, sizeof(MYFLT)*CS_KSMPS);
+      memset(outp, 0, sizeof(cs_float)*CS_KSMPS);
       return OK;
     }
     while (src1 + CS_KSMPS > inp2)     /* if not enough smps presnt */
@@ -455,7 +574,7 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
     phsinc1 = (int32)(*p->kfrq1 * p->lsicvt);
     phsinc2 = (int32)(*p->kfrq2 * p->lsicvt);
     for (n=offset; n<nsmps; n++) {
-      MYFLT sum;
+      cs_float sum;
       if (src1 != NULL) {
         if (++cnt1 < p->pnt11) {
           sum = *src1++ * lin1;
@@ -533,7 +652,7 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
         }
 #if 0
         else if (UNLIKELY(++hrngflg > 200)) {
-          csound->Message(csound, Str("harmon out of range...\n"));
+          csound->Message(csound, "%s", Str("harmon out of range...\n"));
           hrngflg = 0;
         }
 #endif
@@ -572,7 +691,7 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
         }
 #if 0
         else if (UNLIKELY(++hrngflg > 200)) {
-          csound->Message(csound, Str("harmon out of range\n"));
+          csound->Message(csound, "%s", Str("harmon out of range\n"));
           hrngflg = 0;
         }
 #endif
@@ -616,14 +735,14 @@ static int32_t harmon(CSOUND *csound, HARMON *p)
 
 static OENTRY localops[] =
   {
-   { "fof",    S(FOFS),   TR, 3, "a","xxxkkkkkiiiiooo",(SUBR)fofset,(SUBR)fof   },
-   { "fof2",   S(FOFS),   TR, 3, "a","xxxkkkkkiiiikko",(SUBR)fofset2,(SUBR)fof  },
-   { "harmon", S(HARMON), 0,3, "a",  "akkkkiii",(SUBR)harmset,  (SUBR)harmon  }
+   { "fof",    S(FOFS),   TR,  "a","xxxkkkkkiiiiooo",(SUBR)fofset,(SUBR)fof   },
+   { "fof2",   S(FOFS),   TR,  "a","xxxkkkkkiiiikko",(SUBR)fofset2,(SUBR)fof  },
+   { "harmon", S(HARMON), 0, "a",  "akkkkiii",(SUBR)harmset,  (SUBR)harmon  }
 };
 
 int32_t ugens7_init_(CSOUND *csound)
 {
-    return csound->AppendOpcodes(csound, &(localops[0]),
-                                 (int32_t) (sizeof(localops) / sizeof(OENTRY)));
+  return csound->AppendOpcodes(csound, &(localops[0]),
+                               (int32_t) (sizeof(localops) / sizeof(OENTRY)));
 }
 

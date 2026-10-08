@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /* ugsc.c -- Opcodes from Sean Costello <costello@seanet.com> */
@@ -41,7 +40,7 @@
 static int32_t svfset(CSOUND *csound, SVF *p)
 {
     IGN(csound);
-    if (*p->iskip) {
+    if (!*p->iskip) {
       /* set initial delay states to 0 */
       p->ynm1 = p->ynm2 = FL(0.0);
     }
@@ -50,11 +49,11 @@ static int32_t svfset(CSOUND *csound, SVF *p)
 
 static int32_t svf(CSOUND *csound, SVF *p)
 {
-    MYFLT f1 = FL(0.0), q1 = FL(1.0), scale = FL(1.0),
+    cs_float f1 = FL(0.0), q1 = FL(1.0), scale = FL(1.0),
           lfco = -FL(1.0), lq = -FL(1.0);
-    MYFLT *low, *high, *band, *in, ynm1, ynm2;
-    MYFLT low2, high2, band2;
-    MYFLT *kfco = p->kfco, *kq = p->kq;
+    cs_float *low, *high, *band, *in, ynm1, ynm2;
+    cs_float low2, high2, band2;
+    cs_float *kfco = p->kfco, *kq = p->kq;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
@@ -72,23 +71,23 @@ static int32_t svf(CSOUND *csound, SVF *p)
      * of Microprocessors.
      */
     if (UNLIKELY(offset)) {
-      memset(low,  '\0', offset*sizeof(MYFLT));
-      memset(high, '\0', offset*sizeof(MYFLT));
-      memset(band, '\0', offset*sizeof(MYFLT));
+      memset(low,  '\0', offset*sizeof(cs_float));
+      memset(high, '\0', offset*sizeof(cs_float));
+      memset(band, '\0', offset*sizeof(cs_float));
     }
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&low[nsmps],  '\0', early*sizeof(MYFLT));
-      memset(&high[nsmps], '\0', early*sizeof(MYFLT));
-      memset(&band[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&low[nsmps],  '\0', early*sizeof(cs_float));
+      memset(&high[nsmps], '\0', early*sizeof(cs_float));
+      memset(&band[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
-      MYFLT fco = asgf ? kfco[n] : *kfco;
-      MYFLT q = asgq ? kq[n] : *kq;
+      cs_float fco = asgf ? kfco[n] : *kfco;
+      cs_float q = asgq ? kq[n] : *kq;
       if (fco != lfco || q != lq) {
         lfco = fco; lq = q;
         /* calculate frequency and Q coefficients */
-        f1 = FL(2.0) * (MYFLT)sin((double)(fco * csound->pidsr));
+        f1 = FL(2.0) * (cs_float)sin((cs_double)(fco * CS_PIDSR));
         /* Protect against division by zero */
         if (UNLIKELY(q<FL(0.000001))) q = FL(1.0);
         q1 = FL(1.0) / q;
@@ -97,8 +96,9 @@ static int32_t svf(CSOUND *csound, SVF *p)
          */
         if (*p->iscl) scale = q1;
       }
+      cs_float sample = in[n];
       low[n]  = low2 = ynm2 + f1 * ynm1;
-      high[n] = high2 = scale * in[n] - low2 - q1 * ynm1;
+      high[n] = high2 = scale * sample - low2 - q1 * ynm1;
       band[n] = band2 = f1 * high2 + ynm1;
       ynm1    = band2;
       ynm2    = low2;
@@ -124,9 +124,9 @@ static int32_t hilbertset(CSOUND *csound, HILBERT *p)
     int32_t j;  /* used to increment for loop */
 
     /* pole values taken from Bernie Hutchins, "Musical Engineer's Handbook" */
-    double poles[12] = {0.3609, 2.7412, 11.1573, 44.7581, 179.6242, 798.4578,
+    cs_double poles[12] = {0.3609, 2.7412, 11.1573, 44.7581, 179.6242, 798.4578,
                         1.2524, 5.5671, 22.3423, 89.6271, 364.7914, 2770.1114};
-    double polefreq, rc, alpha, beta;
+    cs_double polefreq, rc, alpha, beta;
     /* calculate coefficients for allpass filters, based on sampling rate */
     for (j=0; j<12; j++) {
       /*      p->coef[j] = (1 - (15 * PI * pole[j]) / CS_ESR) /
@@ -134,10 +134,10 @@ static int32_t hilbertset(CSOUND *csound, HILBERT *p)
       polefreq = poles[j] * 15.0;
       rc = 1.0 / (2.0 * PI * polefreq);
       alpha = 1.0 / rc;
-      alpha = alpha * 0.5 * (double)csound->onedsr;
+      alpha = alpha * 0.5 * (cs_double)CS_ONEDSR;
       beta = (1.0 - alpha) / (1.0 + alpha);
       p->xnm1[j] = p->ynm1[j] = FL(0.0);
-      p->coef[j] = -(MYFLT)beta;
+      p->coef[j] = -(cs_float)beta;
     }
     return OK;
 }
@@ -145,9 +145,9 @@ static int32_t hilbertset(CSOUND *csound, HILBERT *p)
 static int32_t hilbert(CSOUND *csound, HILBERT *p)
 {
      IGN(csound);
-    MYFLT xn1, yn1, xn2, yn2;
-    MYFLT *out1, *out2, *in;
-    MYFLT *coef;
+    cs_float xn1, yn1, xn2, yn2;
+    cs_float *out1, *out2, *in;
+    cs_float *coef;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
@@ -159,13 +159,13 @@ static int32_t hilbert(CSOUND *csound, HILBERT *p)
     in = p->in;
 
     if (UNLIKELY(offset)) {
-      memset(out1, '\0', offset*sizeof(MYFLT));
-      memset(out2, '\0', offset*sizeof(MYFLT));
+      memset(out1, '\0', offset*sizeof(cs_float));
+      memset(out2, '\0', offset*sizeof(cs_float));
     }
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out1[nsmps], '\0', early*sizeof(MYFLT));
-      memset(&out2[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out1[nsmps], '\0', early*sizeof(cs_float));
+      memset(&out2[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
       xn1 = in[n];
@@ -235,12 +235,12 @@ static int32_t resonr(CSOUND *csound, RESONZ *p)
      *
      */
 
-    double r = 0.0, scale = 1.0; /* radius & scaling factor */
-    double c1=0.0, c2=0.0;   /* filter coefficients */
-    MYFLT *out, *in;
-    double xn, yn, xnm1, xnm2, ynm1, ynm2;
-    MYFLT *kcf = p->kcf, *kbw = p->kbw;
-    MYFLT lcf = -FL(1.0), lbw = -FL(1.0);
+    cs_double r = 0.0, scale = 1.0; /* radius & scaling factor */
+    cs_double c1=0.0, c2=0.0;   /* filter coefficients */
+    cs_float *out, *in;
+    cs_double xn, yn, xnm1, xnm2, ynm1, ynm2;
+    cs_float *kcf = p->kcf, *kbw = p->kbw;
+    cs_float lcf = -FL(1.0), lbw = -FL(1.0);
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
@@ -253,26 +253,26 @@ static int32_t resonr(CSOUND *csound, RESONZ *p)
     ynm1 = p->ynm1;
     ynm2 = p->ynm2;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
-      MYFLT cf = asgf ? kcf[n] : *kcf;
-      MYFLT bw = asgw ? kbw[n] : *kbw;
+      cs_float cf = asgf ? kcf[n] : *kcf;
+      cs_float bw = asgw ? kbw[n] : *kbw;
       if (cf != lcf || bw != lbw) {
         lcf = cf; lbw = bw;
-        r = exp((double)(bw * csound->mpidsr));
-        c1 = 2.0 * r * cos((double)(cf * csound->tpidsr));
+        r = exp((cs_double)(bw * CS_MPIDSR));
+        c1 = 2.0 * r * cos((cs_double)(cf * CS_TPIDSR));
         c2 = r * r;
         if (p->scaletype == 1)
           scale = 1.0 - r;
         else if (p->scaletype == 2)
           scale = sqrt(1.0 - r);
       }
-      xn = (double)in[n];
-      out[n] = (MYFLT)(yn = scale * (xn - r * xnm2) + c1 * ynm1 - c2 * ynm2);
+      xn = (cs_double)in[n];
+      out[n] = (cs_float)(yn = scale * (xn - r * xnm2) + c1 * ynm1 - c2 * ynm2);
       xnm2 = xnm1;
       xnm1 = xn;
       ynm2 = ynm1;
@@ -298,12 +298,12 @@ static int32_t resonz(CSOUND *csound, RESONZ *p)
      *
      */
 
-    double r = 0.0, scale = 1.0; /* radius & scaling factor */
-    double c1=0.0, c2=0.0;   /* filter coefficients */
-    MYFLT *out, *in;
-    double xn, yn, xnm1, xnm2, ynm1, ynm2;
-    MYFLT *kcf = p->kcf, *kbw = p->kbw;
-    MYFLT lcf = -FL(1.0), lbw = -FL(1.0);
+    cs_double r = 0.0, scale = 1.0; /* radius & scaling factor */
+    cs_double c1=0.0, c2=0.0;   /* filter coefficients */
+    cs_float *out, *in;
+    cs_double xn, yn, xnm1, xnm2, ynm1, ynm2;
+    cs_float *kcf = p->kcf, *kbw = p->kbw;
+    cs_float lcf = -FL(1.0), lbw = -FL(1.0);
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
@@ -321,26 +321,26 @@ static int32_t resonz(CSOUND *csound, RESONZ *p)
     ynm1 = p->ynm1;
     ynm2 = p->ynm2;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
-      MYFLT cf = asgf ? kcf[n] : *kcf;
-      MYFLT bw = asgw ? kbw[n] : *kbw;
+      cs_float cf = asgf ? kcf[n] : *kcf;
+      cs_float bw = asgw ? kbw[n] : *kbw;
       if (cf != lcf || bw != lbw) {
         lcf = cf; lbw = bw;
-        r = exp(-(double)(bw * csound->pidsr));
-        c1 = 2.0 * r * cos((double)(csound->tpidsr*cf));
+        r = exp(-(cs_double)(bw * CS_PIDSR));
+        c1 = 2.0 * r * cos((cs_double)(CS_TPIDSR*cf));
         c2 = r * r;
         if (p->scaletype == 1)
           scale = (1.0 - c2) * 0.5;
         else if (p->scaletype == 2)
           scale = sqrt((1.0 - c2) * 0.5);
       }
-      xn = (double)in[n];
-      out[n] = (MYFLT)(yn = scale * (xn - xnm2) + c1 * ynm1 - c2 * ynm2);
+      xn = (cs_double)in[n];
+      out[n] = (cs_float)(yn = scale * (xn - xnm2) + c1 * ynm1 - c2 * ynm2);
       xnm2 = xnm1;
       xnm1 = xn;
       ynm2 = ynm1;
@@ -354,47 +354,46 @@ static int32_t resonz(CSOUND *csound, RESONZ *p)
     return OK;
 }
 
+static void phaser_grow_state(CSOUND *csound, AUXCH *state, size_t size)
+{
+    if (state->size < size) {
+      size_t oldSize = state->size;
+      void *saved = csound->Malloc(csound, oldSize);
+      memcpy(saved, state->auxp, oldSize);
+      csound->AuxAlloc(csound, size, state);
+      memcpy(state->auxp, saved, oldSize);
+      csound->Free(csound, saved);
+    }
+}
+
 static int32_t phaser1set(CSOUND *csound, PHASER1 *p)
 {
-    int32_t  loop = (int32_t) MYFLT2LONG(*p->iorder);
-    int32_t  nBytes = (int32_t) loop * (int32_t) sizeof(MYFLT);
+    int32_t  loop = (int32_t) CS_FLOAT2LONG(*p->iorder);
+    int32_t  nBytes = (int32_t) loop * (int32_t) sizeof(cs_float);
 
     if (*p->istor == FL(0.0) || p->auxx.auxp == NULL ||
-        (int32_t)p->auxx.size<nBytes || p->auxy.auxp == NULL ||
-        (int32_t)p->auxy.size<nBytes) {
+        p->auxy.auxp == NULL) {
       csound->AuxAlloc(csound, nBytes, &p->auxx);
       csound->AuxAlloc(csound, nBytes, &p->auxy);
-      p->xnm1 = (MYFLT *) p->auxx.auxp;
-      p->ynm1 = (MYFLT *) p->auxy.auxp;
+      p->feedback = FL(0.0);
     }
-    else if ((int32_t) p->auxx.size < nBytes || (int32_t) p->auxy.size < nBytes) {
-      /* Existing arrays too small so copy */
-      void    *tmp1, *tmp2;
-      size_t  oldSize1 = (size_t) p->auxx.size;
-      size_t  oldSize2 = (size_t) p->auxy.size;
-      tmp1 = csound->Malloc(csound, oldSize1 + oldSize2);
-      tmp2 = (char*) tmp1 + (int32_t) oldSize1;
-      memcpy(tmp1, p->auxx.auxp, oldSize1);
-      memcpy(tmp2, p->auxy.auxp, oldSize2);
-      csound->AuxAlloc(csound, nBytes, &p->auxx);
-      csound->AuxAlloc(csound, nBytes, &p->auxy);
-      memcpy(p->auxx.auxp, tmp1, oldSize1);
-      memcpy(p->auxy.auxp, tmp2, oldSize2);
-      csound->Free(csound, tmp1);
-      p->xnm1 = (MYFLT *) p->auxx.auxp;
-      p->ynm1 = (MYFLT *) p->auxy.auxp;
+    else {
+      phaser_grow_state(csound, &p->auxx, (size_t)nBytes);
+      phaser_grow_state(csound, &p->auxy, (size_t)nBytes);
     }
+    p->xnm1 = (cs_float *) p->auxx.auxp;
+    p->ynm1 = (cs_float *) p->auxy.auxp;
     p->loop = loop;
     return OK;
 }
 
 static int32_t phaser1(CSOUND *csound, PHASER1 *p)
 {
-    MYFLT xn = FL(0.0), yn = FL(0.0);
-    MYFLT *out, *in;
-    MYFLT feedback;
-    MYFLT coef = FABS(*p->kcoef), fbgain = *p->fbgain;
-    MYFLT beta, wp;
+    cs_float xn = FL(0.0), yn = FL(0.0);
+    cs_float *out, *in;
+    cs_float feedback;
+    cs_float coef = FABS(*p->kcoef), fbgain = *p->fbgain;
+    cs_float beta, wp;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t i, nsmps = CS_KSMPS;
@@ -409,13 +408,13 @@ static int32_t phaser1(CSOUND *csound, PHASER1 *p)
      * frequency value into a useable coefficient for the
      * allpass filters.
      */
-    wp = csound->pidsr * coef;
+    wp = CS_PIDSR * coef;
     beta = (FL(1.0) - wp)/(FL(1.0) + wp);
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (i=offset; i<nsmps; i++) {
       xn = in[i] + feedback * fbgain;
@@ -443,29 +442,34 @@ static int32_t phaser2set(CSOUND *csound, PHASER2 *p)
     p->modetype = modetype = (int32_t)*p->mode;
     if (UNLIKELY(UNLIKELY(modetype && modetype != 1 && modetype != 2))) {
       return csound->InitError(csound,
-                               Str("Phaser mode must be either 1 or 2"));
+                               "%s", Str("Phaser mode must be either 1 or 2"));
     }
+    loop = p->loop = (int32_t) CS_FLOAT2LONG(*p->order);
 
-    loop = p->loop = (int32_t) MYFLT2LONG(*p->order);
-    csound->AuxAlloc(csound, (size_t)loop*sizeof(MYFLT), &p->aux1);
-    csound->AuxAlloc(csound, (size_t)loop*sizeof(MYFLT), &p->aux2);
-    p->nm1 = (MYFLT *) p->aux1.auxp;
-    p->nm2 = (MYFLT *) p->aux2.auxp;
-    /* *** This is unnecessary as AuxAlloc zeros *** */
-    /* for (j=0; j< loop; j++) */
-    /*   p->nm1[j] = p->nm2[j] = FL(0.0); */
+    if (*p->iskip==0 || p->aux1.auxp==NULL || p->aux2.auxp==NULL) {
+      csound->AuxAlloc(csound, (size_t)loop*sizeof(cs_double), &p->aux1);
+      csound->AuxAlloc(csound, (size_t)loop*sizeof(cs_double), &p->aux2);
+      p->feedback = 0.0;
+    }
+    else {
+      phaser_grow_state(csound, &p->aux1, (size_t)loop*sizeof(cs_double));
+      phaser_grow_state(csound, &p->aux2, (size_t)loop*sizeof(cs_double));
+    }
+    p->nm1 = (cs_double *) p->aux1.auxp;
+    p->nm2 = (cs_double *) p->aux2.auxp;
     return OK;
 }
 
 static int32_t phaser2(CSOUND *csound, PHASER2 *p)
 {
-    MYFLT xn = FL(0.0), yn = FL(0.0);
-    MYFLT *out, *in;
-    MYFLT kbf = *p->kbf, kq = *p->kbw;
-    MYFLT ksep = *p->ksep, fbgain = *p->fbgain;
-    MYFLT b, a, r, freq;
-    MYFLT temp;
-    MYFLT *nm1, *nm2, feedback;
+    /* Low-frequency allpass sections need cs_double coefficients and state. */
+    cs_double xn = 0.0, yn = 0.0;
+    cs_float *out, *in;
+    cs_double kbf = *p->kbf, kq = *p->kbw;
+    cs_double ksep = *p->ksep, fbgain = *p->fbgain;
+    cs_double b, a, r, freq;
+    cs_double temp;
+    cs_double *nm1, *nm2, feedback;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
@@ -487,13 +491,13 @@ static int32_t phaser2(CSOUND *csound, PHASER2 *p)
     if (ksep <= FL(0.0))
       ksep = -ksep;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
-      MYFLT kk = FL(1.0);
+      cs_double kk = 1.0;
       xn = in[n] + feedback * fbgain;
       /* The following code is used to determine
        * how the frequencies of the notches are calculated.
@@ -507,7 +511,6 @@ static int32_t phaser2(CSOUND *csound, PHASER2 *p)
         else {
           freq = kbf * kk;
           kk *= ksep;
-          //freq = kbf * csound->intpow(ksep,(int32_t)j);
         }
         /* Note similarities of following equations to
          * equations in resonr/resonz. The 2nd-order
@@ -517,8 +520,8 @@ static int32_t phaser2(CSOUND *csound, PHASER2 *p)
          * notch, while the pole radius determines the q of
          * the notch.
          */
-        r = EXP(-(freq * csound->pidsr / kq));
-        b = -FL(2.0) * r * COS(freq * csound->tpidsr);
+        r = exp(-(freq * CS_PIDSR / kq));
+        b = -2.0 * r * cos(freq * CS_TPIDSR);
         a = r * r;
 
         /* Difference equations for implementing canonical
@@ -530,7 +533,7 @@ static int32_t phaser2(CSOUND *csound, PHASER2 *p)
         nm1[j] = temp;
         xn = yn;
       }
-      out[n] = yn;
+      out[n] = (cs_float)yn;
       feedback = yn;
     }
     p->feedback = feedback;
@@ -550,17 +553,17 @@ static int32_t lp2_set(CSOUND *csound, LP2 *p)
 Hal Chamberlin's "Musical Applications of Microprocessors." */
 static int32_t lp2(CSOUND *csound, LP2 *p)
 {
-    double a, b, c, temp;
-    MYFLT *out, *in;
-    double yn, ynm1, ynm2;
-    MYFLT kfco = *p->kfco, kres = *p->kres;
+    cs_double a, b, c, temp;
+    cs_float *out, *in;
+    cs_double yn, ynm1, ynm2;
+    cs_float kfco = *p->kfco, kres = *p->kres;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
 
-    temp = (double)(csound->mpidsr * kfco / kres);
+    temp = (cs_double)(CS_MPIDSR * kfco / kres);
       /* (-PI_F * kfco / (kres * CS_ESR)); */
-    a = 2.0 * cos((double) (kfco * csound->tpidsr)) * exp(temp);
+    a = 2.0 * cos((cs_double) (kfco * CS_TPIDSR)) * exp(temp);
     b = exp(temp+temp);
     c = 1.0 - a + b;
 
@@ -569,13 +572,13 @@ static int32_t lp2(CSOUND *csound, LP2 *p)
     ynm1 = p->ynm1;
     ynm2 = p->ynm2;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
-      out[n] = (MYFLT)(yn = a * ynm1 - b * ynm2 + c * (double)in[n]);
+      out[n] = (cs_float)(yn = a * ynm1 - b * ynm2 + c * (cs_double)in[n]);
       ynm2 = ynm1;
       ynm1 = yn;
     }
@@ -586,18 +589,18 @@ static int32_t lp2(CSOUND *csound, LP2 *p)
 
 static int32_t lp2aa(CSOUND *csound, LP2 *p)
 {
-    double a, b, c, temp;
-    MYFLT *out, *in;
-    double yn, ynm1, ynm2;
-    MYFLT *fcop = p->kfco, *resp = p->kres;
-    MYFLT fco = fcop[0], res = resp[0];
+    cs_double a, b, c, temp;
+    cs_float *out, *in;
+    cs_double yn, ynm1, ynm2;
+    cs_float *fcop = p->kfco, *resp = p->kres;
+    cs_float fco = fcop[0], res = resp[0];
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
 
-    temp = (double)(csound->mpidsr * fco / res);
+    temp = (cs_double)(CS_MPIDSR * fco / res);
       /* (-PI_F * kfco / (kres * CS_ESR)); */
-    a = 2.0 * cos((double) (fco * csound->tpidsr)) * exp(temp);
+    a = 2.0 * cos((cs_double) (fco * CS_TPIDSR)) * exp(temp);
     b = exp(temp+temp);
     c = 1.0 - a + b;
 
@@ -606,21 +609,21 @@ static int32_t lp2aa(CSOUND *csound, LP2 *p)
     ynm1 = p->ynm1;
     ynm2 = p->ynm2;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
       if (res!=resp[n] || fco!=fcop[n]) {
         res=resp[n]; fco=fcop[n];
-        temp = (double)(csound->mpidsr * fco / res);
+        temp = (cs_double)(CS_MPIDSR * fco / res);
         /* (-PI_F * kfco / (kres * CS_ESR)); */
-        a = 2.0 * cos((double) (fco * csound->tpidsr)) * exp(temp);
+        a = 2.0 * cos((cs_double) (fco * CS_TPIDSR)) * exp(temp);
         b = exp(temp+temp);
         c = 1.0 - a + b;
       }
-      out[n] = (MYFLT)(yn = a * ynm1 - b * ynm2 + c * (double)in[n]);
+      out[n] = (cs_float)(yn = a * ynm1 - b * ynm2 + c * (cs_double)in[n]);
       ynm2 = ynm1;
       ynm1 = yn;
     }
@@ -631,18 +634,18 @@ static int32_t lp2aa(CSOUND *csound, LP2 *p)
 
 static int32_t lp2ka(CSOUND *csound, LP2 *p)
 {
-    double a, b, c, temp;
-    MYFLT *out, *in;
-    double yn, ynm1, ynm2;
-    MYFLT *resp = p->kres;
-    MYFLT fco = *p->kfco, res = resp[0];
+    cs_double a, b, c, temp;
+    cs_float *out, *in;
+    cs_double yn, ynm1, ynm2;
+    cs_float *resp = p->kres;
+    cs_float fco = *p->kfco, res = resp[0];
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
 
-    temp = (double)(csound->mpidsr * fco / res);
+    temp = (cs_double)(CS_MPIDSR * fco / res);
       /* (-PI_F * kfco / (kres * CS_ESR)); */
-    a = 2.0 * cos((double) (fco * csound->tpidsr)) * exp(temp);
+    a = 2.0 * cos((cs_double) (fco * CS_TPIDSR)) * exp(temp);
     b = exp(temp+temp);
     c = 1.0 - a + b;
 
@@ -651,21 +654,21 @@ static int32_t lp2ka(CSOUND *csound, LP2 *p)
     ynm1 = p->ynm1;
     ynm2 = p->ynm2;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
       if (res!=resp[n]) {
         res=resp[n];
-        temp = (double)(csound->mpidsr * fco / res);
+        temp = (cs_double)(CS_MPIDSR * fco / res);
         /* (-PI_F * kfco / (kres * CS_ESR)); */
-        a = 2.0 * cos((double) (fco * csound->tpidsr)) * exp(temp);
+        a = 2.0 * cos((cs_double) (fco * CS_TPIDSR)) * exp(temp);
         b = exp(temp+temp);
         c = 1.0 - a + b;
       }
-      out[n] = (MYFLT)(yn = a * ynm1 - b * ynm2 + c * (double)in[n]);
+      out[n] = (cs_float)(yn = a * ynm1 - b * ynm2 + c * (cs_double)in[n]);
       ynm2 = ynm1;
       ynm1 = yn;
     }
@@ -676,18 +679,18 @@ static int32_t lp2ka(CSOUND *csound, LP2 *p)
 
 static int32_t lp2ak(CSOUND *csound, LP2 *p)
 {
-    double a, b, c, temp;
-    MYFLT *out, *in;
-    double yn, ynm1, ynm2;
-    MYFLT *fcop = p->kfco;
-    MYFLT fco = fcop[0], res = *p->kres;
+    cs_double a, b, c, temp;
+    cs_float *out, *in;
+    cs_double yn, ynm1, ynm2;
+    cs_float *fcop = p->kfco;
+    cs_float fco = fcop[0], res = *p->kres;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t n, nsmps = CS_KSMPS;
 
-    temp = (double)(csound->mpidsr * fco / res);
+    temp = (cs_double)(CS_MPIDSR * fco / res);
       /* (-PI_F * kfco / (kres * CS_ESR)); */
-    a = 2.0 * cos((double) (fco * csound->tpidsr)) * exp(temp);
+    a = 2.0 * cos((cs_double) (fco * CS_TPIDSR)) * exp(temp);
     b = exp(temp+temp);
     c = 1.0 - a + b;
 
@@ -696,21 +699,21 @@ static int32_t lp2ak(CSOUND *csound, LP2 *p)
     ynm1 = p->ynm1;
     ynm2 = p->ynm2;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n=offset; n<nsmps; n++) {
       if (fco!=fcop[n]) {
         fco=fcop[n];
-        temp = (double)(csound->mpidsr * fco / res);
+        temp = (cs_double)(CS_MPIDSR * fco / res);
         /* (-PI_F * kfco / (kres * CS_ESR)); */
-        a = 2.0 * cos((double) (fco * csound->tpidsr)) * exp(temp);
+        a = 2.0 * cos((cs_double) (fco * CS_TPIDSR)) * exp(temp);
         b = exp(temp+temp);
         c = 1.0 - a + b;
       }
-      out[n] = (MYFLT)(yn = a * ynm1 - b * ynm2 + c * (double)in[n]);
+      out[n] = (cs_float)(yn = a * ynm1 - b * ynm2 + c * (cs_double)in[n]);
       ynm2 = ynm1;
       ynm1 = yn;
     }
@@ -719,20 +722,102 @@ static int32_t lp2ak(CSOUND *csound, LP2 *p)
     return OK;
 }
 
+#include "arrays.h"
+
+typedef struct {
+        OPDS h;
+        ARRAYDAT *out;
+        cs_float *in;
+        cs_float xnm1[12], ynm1[12], coef[12];
+} HILBERTA;
+
+
+static int32_t hilbertset_array(CSOUND *csound, HILBERTA *p)
+{
+    int32_t j;  
+    cs_double poles[12] = {0.3609, 2.7412, 11.1573, 44.7581, 179.6242, 798.4578,
+                        1.2524, 5.5671, 22.3423, 89.6271, 364.7914, 2770.1114};
+    cs_double polefreq, rc, alpha, beta;
+    for (j=0; j<12; j++) {
+      polefreq = poles[j] * 15.0;
+      rc = 1.0 / (2.0 * PI * polefreq);
+      alpha = 1.0 / rc;
+      alpha = alpha * 0.5 * (cs_double)CS_ONEDSR;
+      beta = (1.0 - alpha) / (1.0 + alpha);
+      p->xnm1[j] = p->ynm1[j] = FL(0.0);
+      p->coef[j] = -(cs_float)beta;
+    }
+    if (UNLIKELY(tabinit(csound, p->out, CS_KSMPS,
+                         p->h.insdshead) != OK))
+      return csound_array_init_resize_error(csound);
+    for(uint32_t k=0; k < CS_KSMPS; k++)
+      ((COMPLEXDAT *)p->out->data)[k].isPolar = 0;  
+    return OK;
+}
+
+static int32_t hilbert_array(CSOUND *csound, HILBERTA *p)
+{
+    cs_float xn1, yn1, xn2, yn2;
+    cs_float *in;
+    COMPLEXDAT *out;
+    cs_float *coef;
+    uint32_t offset = p->h.insdshead->ksmps_offset;
+    uint32_t early  = p->h.insdshead->ksmps_no_end;
+    uint32_t n, nsmps = CS_KSMPS;
+    int32_t j;
+
+    if (UNLIKELY(tabcheck(csound, p->out, CS_KSMPS, &p->h) != OK))
+      return NOTOK;
+    coef = p->coef;
+    out = (COMPLEXDAT *) p->out->data;
+    in = p->in;
+
+    if (UNLIKELY(offset)) {
+      memset(out, '\0', offset*sizeof(COMPLEXDAT));
+    }
+    if (UNLIKELY(early)) {
+      nsmps -= early;
+      memset(&out[nsmps], '\0', early*sizeof(COMPLEXDAT));
+    }
+    for (n=offset; n<nsmps; n++) {
+      xn1 = in[n];
+      for (j=0; j < 6; j++) {
+        yn1 = coef[j] * (xn1 - p->ynm1[j]) + p->xnm1[j];
+        p->xnm1[j] = xn1;
+        p->ynm1[j] = yn1;
+        xn1 = yn1;
+      }
+      xn2 = in[n];
+      for (j=6; j < 12; j++) {
+        yn2 = coef[j] * (xn2 - p->ynm1[j]) + p->xnm1[j];
+        p->xnm1[j] = xn2;
+        p->ynm1[j] = yn2;
+        xn2 = yn2;
+      }
+      out[n].real = yn2;
+      out[n].imag = yn1;
+      out[n].isPolar = 0;
+    }
+    return OK;
+}
+
+
 #define S(x)    sizeof(x)
 
 static OENTRY localops[] =
   {
-   { "svfilter", S(SVF),    0, 3, "aaa", "axxoo", (SUBR)svfset, (SUBR)svf    },
-   { "hilbert", S(HILBERT), 0,3, "aa", "a", (SUBR)hilbertset, (SUBR)hilbert },
-   { "resonr", S(RESONZ),   0,3, "a", "axxoo", (SUBR)resonzset, (SUBR)resonr},
-   { "resonz", S(RESONZ),   0,3, "a", "axxoo", (SUBR)resonzset, (SUBR)resonz},
-   { "lowpass2.kk", S(LP2), 0,3, "a", "akko",  (SUBR)lp2_set, (SUBR)lp2     },
-   { "lowpass2.aa", S(LP2), 0,3, "a", "aaao",  (SUBR)lp2_set, (SUBR)lp2aa   },
-   { "lowpass2.ak", S(LP2), 0,3, "a", "aakao", (SUBR)lp2_set, (SUBR)lp2ak   },
-   { "lowpass2.ka", S(LP2), 0,3, "a", "akao",  (SUBR)lp2_set, (SUBR)lp2ka   },
-   { "phaser2", S(PHASER2), 0,3, "a", "akkkkkk",(SUBR)phaser2set,(SUBR)phaser2},
-   { "phaser1", S(PHASER1), 0,3, "a", "akkko", (SUBR)phaser1set,(SUBR)phaser1}
+   { "svfilter", S(SVF),    0, "aaa", "axxoo",(SUBR)svfset, (SUBR)svf    },
+   { "hilbert", S(HILBERT), 0, "aa", "a",      (SUBR)hilbertset, (SUBR)hilbert },
+   { "resonr", S(RESONZ),   0, "a", "axxoo",   (SUBR)resonzset, (SUBR)resonr},
+   { "resonz", S(RESONZ),   0, "a", "axxoo",   (SUBR)resonzset, (SUBR)resonz},
+   { "lowpass2.kk", S(LP2), 0, "a", "akko",    (SUBR)lp2_set, (SUBR)lp2     },
+   { "lowpass2.aa", S(LP2), 0, "a", "aaao",    (SUBR)lp2_set, (SUBR)lp2aa   },
+   { "lowpass2.ak", S(LP2), 0, "a", "aako",   (SUBR)lp2_set, (SUBR)lp2ak   },
+   { "lowpass2.ka", S(LP2), 0, "a", "akao",    (SUBR)lp2_set, (SUBR)lp2ka   },
+   { "phaser2", S(PHASER2), 0, "a", "akkkkkko",(SUBR)phaser2set,(SUBR)phaser2},
+   { "phaser1", S(PHASER1), 0, "a", "akkko", (SUBR)phaser1set,(SUBR)phaser1},
+   { "hilbert", S(HILBERTA), 0, ":Complex;[]", "a",
+     (SUBR)hilbertset_array, (SUBR)hilbert_array },
 };
 
 int32_t ugsc_init_(CSOUND *csound)
@@ -741,4 +826,3 @@ int32_t ugsc_init_(CSOUND *csound)
                                  (int32_t
                                   ) (sizeof(localops) / sizeof(OENTRY)));
 }
-

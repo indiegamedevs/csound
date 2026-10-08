@@ -22,8 +22,7 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with Csound; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-  02110-1301 USA
+  Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 // ORIGINAL COPYRIGHT NOTICE
@@ -82,7 +81,7 @@
  *      knum -- Integer output.
  */
 
-#include <time.h>
+#include <cmath>
 #include <plugin.h>
 
 struct LFSR : csnd::Plugin<1, 3> {
@@ -92,16 +91,18 @@ struct LFSR : csnd::Plugin<1, 3> {
     uint8_t length_;
     uint8_t probability_;
     uint32_t shift_register_;
+    int32_t random_;
 
     uint32_t _process() {
         uint32_t shift_register = shift_register_;
+        CSOUND *engine = csound->get_csound();
 
         // Toggle LSB; there might be better random options
-        if (255 == probability_ || static_cast<uint8_t>((rand() % (255 + 1)) < probability_)) {
+        if (255 == probability_ || (engine->Rand31(&random_) % 256) < probability_) {
             shift_register ^= 0x1;
         }
 
-        uint32_t lsb_mask = 0x1 << (length_ - 1);
+        uint32_t lsb_mask = 0x1u << (length_ - 1);
         if (shift_register & 0x1) {
             shift_register = (shift_register >> 1) | lsb_mask;
         } else {
@@ -110,30 +111,54 @@ struct LFSR : csnd::Plugin<1, 3> {
 
         // hack... don't turn all zero ...
         if (!shift_register) {
-            shift_register |= ((rand() % (0x2 + 1)) << (length_ - 1));
+            shift_register |= (static_cast<uint32_t>(engine->Rand31(&random_) % 3)
+                               << (length_ - 1));
         }
 
         shift_register_ = shift_register;
         return shift_register & ~(0xffffffff << length_);
     }
 
-    int init() {
-        srand(time(NULL));
-
-        length_ = inargs[0];
-        probability_ = inargs[1];
-        shift_register_ = in_count() == 3 ? inargs[2] : 0xffffffff;
+    int32_t init() {
+        if (!(inargs[0] >= 1 && inargs[0] < 32))
+            return csound->init_error(Str_noop("lfsr: register length must be 1 to 31"));
+        if (!(inargs[1] >= 1 && inargs[1] < 256))
+            return csound->init_error(Str_noop("lfsr: probability must be 1 to 255"));
+        cs_double seed = in_count() == 3 ? static_cast<cs_double>(inargs[2]) : -1.0;
+        if (!std::isfinite(seed))
+            return csound->init_error(Str_noop("lfsr: seed must be finite"));
+        // Convert bit patterns modulo 2^32, including the documented -1.
+        seed = std::fmod(std::trunc(seed), 4294967296.0);
+        length_ = static_cast<uint8_t>(inargs[0]);
+        probability_ = static_cast<uint8_t>(inargs[1]);
+        // Add the modulus in integer arithmetic so -1 and -2 stay distinct
+        // when cs_double is float. The remainder fits in int64_t.
+        shift_register_ = static_cast<uint32_t>(static_cast<int64_t>(seed));
+        CSOUND *engine = csound->get_csound();
+        random_ = engine->Rand31(engine->RandSeed31(engine));
 
         return OK;
     }
 
-    int kperf() {
+    int32_t kperf() {
         outargs[0] = (int) _process();
         return OK;
     }
 };
 
+#ifdef BUILD_PLUGINS
 #include <modload.h>
 void csnd::on_load(Csound *csound) {
   csnd::plugin<LFSR>(csound, "lfsr", "k", "iij", csnd::thread::ik);
 }
+#else 
+extern "C" int32_t lfsr_init_modules(CSOUND *csound) {
+  csnd::plugin<LFSR>((csnd::Csound *) csound, "lfsr", "k", "iij", csnd::thread::ik);
+  return OK;
+}
+
+#endif
+
+
+
+

@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_ORC_SEMANTICS_H
@@ -26,13 +25,50 @@
 
 #include "csoundCore.h"
 #include "csound_orc.h"
+#include "csound_orc_structs.h"  /* CS_STRUCT_VAR public layout */
 
 /** Gets short version of opcode name, trimming off anything after '.'.
  If opname has no '.' in name, simply returns the opname pointer.
- If the name is truncated, caller is responsible for calling mfree
+ If the name is truncated, caller is responsible for calling csoundFree
  on returned value.  Caller should compare the returned value with the
- passed in opname to see if it is different and thus requires mfree'ing. */
+ passed in opname to see if it is different and thus requires csoundFree'ing. */
 #include "find_opcode.h"
-char* get_arg_type2(CSOUND* csound, TREE* tree, TYPE_TABLE* typeTable);
 
+char *strip_extension(CSOUND *csound, const char *s);
+char* get_arg_type2(CSOUND* csound, TREE* tree, TYPE_TABLE* typeTable);
+char* create_array_arg_type(CSOUND* csound, CS_VARIABLE* arrayVar);
+int32_t is_pfield_name(const char *name);
+int32_t get_pfield_index(const char *name);
+
+void print_tree(CSOUND *, char *, TREE *);
+OENTRIES* find_opcode2(CSOUND*, char*);
+char* resolve_opcode_get_outarg(CSOUND* csound,
+                                OENTRIES* entries, char* inArgTypes);
+void do_baktrace(CSOUND *csound, uint64_t files);
+char* get_arg_string_from_tree(CSOUND* csound, TREE* tree,
+                               TYPE_TABLE* typeTable);
+char* convert_external_to_internal(CSOUND* csound, char* arg);
+int32_t check_out_args(CSOUND* csound, char* outArgsFound, char* opOutArgs);
+void handle_optional_args(CSOUND *, TREE *);
+char* resolve_opcode_get_outarg(CSOUND* , OENTRIES* , char*);
+/* grammar-rule variant of tree_append(); only for use in parser rules */
+TREE* parser_append(CSOUND * csound, TREE *first, TREE *newlast);
+void add_arg(CSOUND* csound, char* varName, char* annotation,
+	     TYPE_TABLE* typeTable, TREE *tree);
+void add_array_arg(CSOUND* csound, char* varName, char* annotation,
+                          int32_t dimensions,
+                          TYPE_TABLE* typeTable);
+char *check_annotated_type(CSOUND* csound, OENTRIES* entries,
+                           char* outArgTypes);
+CS_VARIABLE* find_var_from_pools(CSOUND* csound, const char* varName,
+                                 const char* varBaseName, TYPE_TABLE* typeTable);
+TREE* verify_tree(CSOUND * csound, TREE *root, TYPE_TABLE* typeTable);
+int32_t verify_opcode(CSOUND* csound, TREE* root, TYPE_TABLE* typeTable);
+// bison functions
+extern int32_t csound_orcget_lineno(void*);
+extern char *csound_orcget_current_pointer(void *);
+
+
+
+TREE* copy_node_shallow(CSOUND* csound, TREE* tree);
 #endif

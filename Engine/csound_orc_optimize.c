@@ -18,14 +18,13 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"
 #include "csound_orc.h"
-extern void print_tree(CSOUND *csound, char*, TREE *l);
-extern void delete_tree(CSOUND *csound, TREE *l);
+#include "csound_orc_semantics.h"
+#include "aops.h"
 
 static TREE * create_fun_token(CSOUND *csound, TREE *right, char *fname)
 {
@@ -33,7 +32,7 @@ static TREE * create_fun_token(CSOUND *csound, TREE *right, char *fname)
     ans = (TREE*)csound->Malloc(csound, sizeof(TREE));
     if (UNLIKELY(ans == NULL)) exit(1);
     ans->type = T_FUNCTION;
-    ans->value = make_token(csound, fname);
+    ans->value = make_token(csound, fname, NULL);
     ans->value->type = T_FUNCTION;
     ans->left = NULL;
     ans->right = right;
@@ -88,8 +87,8 @@ static TREE * verify_tree1(CSOUND *csound, TREE *root)
 {
     TREE *last;
     //print_tree(csound, "Verify", root);
-    if (root->right && root->right->type != T_INSTLIST) {
-      if (root->type == T_OPCODE || root->type == T_OPCODE0) {
+    if (root->right) {
+      if (root->type == T_OPCALL) {
         last = root->right;
         while (last->next) {
           /* we optimize the i() functions in the opcode */
@@ -124,60 +123,63 @@ static TREE * verify_tree1(CSOUND *csound, TREE *root)
 }
 
 //#ifdef JPFF
-static inline int same_type(char *var, char ty)
+/*
+static inline int32_t same_type(char *var, char ty)
 {
     if (var[0]=='g') return var[1]==ty;
     else return var[0]==ty;
 }
+*/
 
-static TREE* remove_excess_assigns(CSOUND *csound, TREE* root)
-{
-    TREE* current = root;
-    while (current) {
-      //if (PARSER_DEBUG) printf("in loop: current->type = %d\n", current->type);
-      if ((current->type == T_OPCODE || current->type == '=') &&
-          current->left != NULL &&
-          //current->right != NULL &&  no one looks at current->right
-          current->left->value->lexeme[0]=='#') {
-        TREE *nxt = current->next;
-        /* if (PARSER_DEBUG) { */
-        /*   printf("passes test1 %s type =%d\n", */
-        /*          current->left->value->lexeme, current->type); */
-        /*   printf("next type = %d; lexeme %s\n", */
-        /*          nxt->type, nxt->right->value->lexeme); */
-        /* } */
-        /* if (PARSER_DEBUG) printf("test3: %c%c %c\n", */
-        /*            nxt->left->value->lexeme[0], nxt->left->value->lexeme[1], */
-        /*            nxt->right->value->lexeme[1]); */
-        if (nxt && nxt->type == '=' &&
-            nxt->left != NULL &&
-            !strcmp(current->left->value->lexeme,nxt->right->value->lexeme) &&
-            same_type(nxt->left->value->lexeme, nxt->right->value->lexeme[1])) {
-          if (PARSER_DEBUG) {
-            printf("passes test2\n");
-            print_tree(csound, "optimise assignment\n", current);
-          }
-          csound->Free(csound, current->left->value);
-          current->left->value = nxt->left->value;
-          current->next = nxt->next;
-          csound->Free(csound,nxt);
-          if (PARSER_DEBUG) print_tree(csound, "change to\n", current);
-        }
-      }
-      else {                    /* no need to check for NULL */
-          current->right = remove_excess_assigns(csound, current->right);
-          current->left = remove_excess_assigns(csound, current->left);
-      }
-      current = current->next;
-    }
-    return root;
-}
-//#endif
+
+#define PARSER_DEBUG1 (0)
+//static TREE* remove_excess_assigns(CSOUND *csound, TREE* root)
+//{
+//    TREE* current = root;
+//    //print_tree(csound, "AssignTest", root);
+//    while (current) {
+//      if (PARSER_DEBUG1) printf("in loop: current->type = %d\n", current->type);
+//      if ((current->type == T_OPCALL || current->type == T_ASSIGNMENT) &&
+//          current->left != NULL &&
+//          //current->right != NULL &&  no one looks at current->right
+//          current->left->value->lexeme[0]=='#') {
+//        TREE *nxt = current->next;
+//        if (PARSER_DEBUG1) {
+//          printf("****passes test1 %s type =%d\n",
+//                 current->left->value->lexeme, current->type);
+//          printf("next type = %d; lexeme %s\n",
+//                 nxt->type, nxt->right->value->lexeme);
+//        }
+//        if (PARSER_DEBUG1) printf("test3: %c%c %c\n",
+//                   nxt->left->value->lexeme[0], nxt->left->value->lexeme[1],
+//                   nxt->right->value->lexeme[1]);
+//        if (nxt && nxt->type == T_ASSIGNMENT /* '=' */ &&
+//            nxt->left != NULL &&
+//            !strcmp(current->left->value->lexeme,nxt->right->value->lexeme) &&
+//            same_type(nxt->left->value->lexeme, nxt->right->value->lexeme[1])) {
+//          if (PARSER_DEBUG1) {
+//            printf("passes test2\n");
+//            print_tree(csound, "optimise assignment\n", current);
+//          }
+//          csound->Free(csound, current->left->value);
+//          current->left->value = nxt->left->value;
+//          current->next = nxt->next;
+//          csound->Free(csound,nxt);
+//          if (PARSER_DEBUG1) print_tree(csound, "change to\n", current);
+//        }
+//      }
+//      else {                    /* no need to check for NULL */
+//          current->right = remove_excess_assigns(csound, current->right);
+//          current->left = remove_excess_assigns(csound, current->left);
+//      }
+//      current = current->next;
+//    }
+//    return root;
+//}
 
 /* Called directly from the parser; constant fold and some alebraic identities */
 TREE* constant_fold(CSOUND *csound, TREE* root)
 {
-    extern MYFLT MOD(MYFLT, MYFLT);
     TREE* current = root;
     while (current) {
       switch (current->type) {
@@ -201,13 +203,13 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
              current->left->type == NUMBER_TOKEN) &&
             (current->right->type == INTEGER_TOKEN ||
              current->right->type == NUMBER_TOKEN)) {
-          MYFLT lval, rval;
+          cs_float lval, rval;
           char buf[64];
           lval = (current->left->type == INTEGER_TOKEN ?
-                  (double)current->left->value->value :
+                  (cs_double)current->left->value->value :
                   current->left->value->fvalue);
           rval = (current->right->type == INTEGER_TOKEN ?
-                  (double)current->right->value->value :
+                  (cs_double)current->right->value->value :
                   current->right->value->fvalue);
           //printf("lval = %g  rval = %g\n", lval, rval);
           switch (current->type) {
@@ -230,19 +232,19 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
             lval = MOD(lval,rval);
             break;
           case '|':
-            lval = (MYFLT)(((int)lval)|((int)rval));
+            lval = (cs_float)(((int)lval)|((int)rval));
             break;
           case '&':
-            lval = (MYFLT)(((int)lval)&((int)rval));
+            lval = (cs_float)(((int)lval)&((int)rval));
             break;
           case '#':
-            lval = (MYFLT)(((int)lval)^((int)rval));
+            lval = (cs_float)(((int)lval)^((int)rval));
             break;
           case S_BITSHIFT_LEFT:
-            lval = (MYFLT)(((int)lval)<<((int)rval));
+            lval = (cs_float)(((int)lval)<<((int)rval));
             break;
           case S_BITSHIFT_RIGHT:
-            lval = (MYFLT)(((int)lval)>>((int)rval));
+            lval = (cs_float)(((int)lval)>>((int)rval));
             break;
           }
           //printf("ans = %g\n", lval);
@@ -251,7 +253,7 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
           current->value->fvalue = lval;
           snprintf(buf, 60, "%.20g", lval);
           csound->Free(csound, current->value->lexeme);
-          current->value->lexeme = cs_strdup(csound, buf);
+          current->value->lexeme = csoundStrdup(csound, buf);
           csound->Free(csound, current->left);
           csound->Free(csound, current->right->value);
           csound->Free(csound, current->right);
@@ -288,7 +290,7 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
                 current->value = current->right->value;
                 current->right = NULL;
                 current->left = NULL;
-                delete_tree(csound, tmp);
+                csoundDeleteTree(csound, tmp);
                 //print_tree(csound, "X op 0 -> 0\n", current);
                 break;
               }
@@ -305,7 +307,7 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
             switch (current->type) {
             case '+':
             case '|':
-                delete_tree(csound,current->left);
+                csoundDeleteTree(csound,current->left);
                 current->type = current->right->type;
                 current->value = current->right->value;
                 current->left = current->right->left;
@@ -325,7 +327,7 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
                 current->value = current->left->value;
                 current->right = NULL;
                 current->left = NULL;
-                delete_tree(csound, tmp);
+                csoundDeleteTree(csound, tmp);
                 //print_tree(csound, "0 op X -> 0\n", current);
                 break;
               }
@@ -365,12 +367,12 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
                 current->value = current->left->value;
                 current->right = NULL;
                 current->left = NULL;
-                delete_tree(csound, tmp);
+                csoundDeleteTree(csound, tmp);
                 //print_tree(csound, "1 op X -> 1\n", current);
                 break;
               }
               case '*':
-                delete_tree(csound,current->left);
+                csoundDeleteTree(csound,current->left);
                 current->type = current->right->type;
                 current->value = current->right->value;
                 current->left = current->right->left;
@@ -381,23 +383,26 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
             }
         break;
       case S_UMINUS:
+      case S_UPLUS:
       case '~':
         //print_tree(csound, "Folding case?\n", current);
         current->right = constant_fold(csound, current->right);
         //print_tree(csound, "Folding case??\n", current);
         if (current->right->type == INTEGER_TOKEN ||
              current->right->type == NUMBER_TOKEN) {
-          MYFLT lval;
+          cs_float lval;
           char buf[64];
           lval = (current->right->type == INTEGER_TOKEN ?
-                  (double)current->right->value->value :
+                  (cs_double)current->right->value->value :
                   current->right->value->fvalue);
           switch (current->type) {
           case S_UMINUS:
             lval = -lval;
             break;
           case '~':
-            lval = (MYFLT)(~(int)lval);
+            lval = (cs_float)(~(int)lval);
+            break;
+          case S_UPLUS:
             break;
           }
           current->value = current->right->value;
@@ -405,7 +410,7 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
           current->value->fvalue = lval;
           snprintf(buf, 60, "%.20g", lval);
           csound->Free(csound, current->value->lexeme);
-          current->value->lexeme = cs_strdup(csound, buf);
+          current->value->lexeme = csoundStrdup(csound, buf);
           csound->Free(csound, current->right);
           current->right = NULL;
         }
@@ -418,7 +423,6 @@ TREE* constant_fold(CSOUND *csound, TREE* root)
     }
     return root;
 }
-
 
 /* Optimizes tree (expressions, etc.) */
 TREE * csound_orc_optimize(CSOUND *csound, TREE *root)
@@ -434,9 +438,7 @@ TREE * csound_orc_optimize(CSOUND *csound, TREE *root)
       last = root;
       root = root->next;
     }
-    //#ifdef JPFF
-    return remove_excess_assigns(csound,original);
-    //#else
-    //return original;
-    //#endif
+    return original;
+    // return remove_excess_assigns(csound,original);
 }
+

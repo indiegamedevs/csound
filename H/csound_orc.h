@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef __CSOUND_ORC_H
@@ -52,33 +51,15 @@ typedef struct type_table {
 #define PARSER_DEBUG (0)
 #endif
 
-TREE* make_node(CSOUND *, int, int, int, TREE*, TREE*);
-TREE* make_leaf(CSOUND *, int, int, int, ORCTOKEN*);
-ORCTOKEN* make_int(CSOUND *,char *);
-ORCTOKEN* make_num(CSOUND *,char *);
-ORCTOKEN *make_token(CSOUND *csound, char *s);
-/*void instr0(CSOUND *, ORCTOKEN*, TREE*, TREE*);*/
-/* extern TREE* statement_list; */
-/* double get_num(TREE*); */
-/*int get_int(TREE*);*/
-/*TREE* check_opcode(TREE*, TREE*, TREE*);*/
-/*TREE* check_opcode0(TREE*, TREE*);*/
-/*void start_instr(int);*/
-/* extern double sr, kr;
-extern int ksmps, nchnls; */
+TREE* make_node(CSOUND *, int32_t, uint64_t, int32_t, TREE*, TREE*);
+TREE* make_leaf(CSOUND *, int32_t, uint64_t, int32_t, ORCTOKEN*);
+ORCTOKEN* make_int(CSOUND *,char *, void*);
+ORCTOKEN* make_num(CSOUND *,char *, void *);
+ORCTOKEN *make_token(CSOUND *csound, char *s, void *);
+TREE* copy_node(CSOUND*, TREE*);
+extern void csp_orc_sa_print_list(CSOUND*);
 
-void query_deprecated_opcode(CSOUND *, ORCTOKEN *);
-int  query_reversewrite_opcode(CSOUND *, ORCTOKEN *);
+int32_t  query_reversewrite_opcode(CSOUND *, ORCTOKEN *);
 
-    // holds matching oentries from opcodeList
-    // has space for 16 matches and next pointer in case more are found
-    // (unlikely though)
-
-typedef struct oentries {
-      int count;                /* Number of etries in table */
-  //char *opname;
-  //int prvnum;
-      OENTRY* entries[0];       /* Entended by count entries */
-    } OENTRIES;
 
 #endif

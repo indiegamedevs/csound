@@ -17,11 +17,12 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*                                                                      LPC.H   */
+
+#pragma once
 
 #define LP_MAGIC    999
 #define LP_MAGIC2   2399           /* pole file type */
@@ -32,6 +33,6 @@
 
 typedef struct {
         uint32_t headersize, lpmagic, npoles, nvals;
-        MYFLT   framrate, srate, duration;
+        cs_float   framrate, srate, duration;
         char    text[4];
 } LPHEADER;

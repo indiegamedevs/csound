@@ -18,8 +18,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /******************************************************************/
@@ -231,9 +230,9 @@ static int32_t pvlook(CSOUND *csound, int32_t argc, char *argv[])
 
 int32_t pvlook_init_(CSOUND *csound)
 {
-    int32_t retval = csound->AddUtility(csound, "pvlook", pvlook);
+    int32_t retval = (csound->GetUtility(csound))->AddUtility(csound, "pvlook", pvlook);
     if (!retval) {
-      retval = csound->SetUtilityDescription(csound, "pvlook",
+      retval = (csound->GetUtility(csound))->SetUtilityDescription(csound, "pvlook",
                     "Prints information about PVOC analysis files");
     }
     return retval;

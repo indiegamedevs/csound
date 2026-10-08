@@ -17,29 +17,22 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"                                  /*   SCSORT.C  */
 #include "corfile.h"
+#include "sread.h"
+#include "prototyp.h"
 #include <ctype.h>
 
-extern void sort(CSOUND*);
-extern void twarp(CSOUND*);
-extern void swritestr(CSOUND*, CORFIL *sco, int first);
-extern void sfree(CSOUND *csound);
-//extern void sread_init(CSOUND *csound);
-extern int  sread(CSOUND *csound);
 
 /* called from smain.c or some other main */
 /* reads,sorts,timewarps each score sect in turn */
-
-extern void sread_initstr(CSOUND *, CORFIL *sco);
 char *scsortstr(CSOUND *csound, CORFIL *scin)
 {
-    int     n;
-    int     first = 0;
+    int32_t     n;
+    int32_t     first = 0;
     CORFIL *sco;
 
     csound->scoreout = NULL;
@@ -64,7 +57,7 @@ char *scsortstr(CSOUND *csound, CORFIL *scin)
     }
     //printf("**** first = %d body = >>%s<<\n", first, sco->body);
     if (first) {
-      int i = 0;
+      int32_t i = 0;
       while (isspace(sco->body[i])) i++;
       if (sco->body[i] == 'e' && sco->body[i+1] == '\n' && sco->body[i+2] != 'e') {
         corfile_rewind(sco);
@@ -79,7 +72,8 @@ char *scsortstr(CSOUND *csound, CORFIL *scin)
       return sco->body;
     }
     else {
-      char *str = cs_strdup(csound,sco->body);
+      char *str = csoundStrdup(csound,sco->body);
+      //printf("body >>%s<<\n", str);
       corfile_rm(csound, &(sco));
       return str;
     }

@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /* mono and stereo automatic audio cutters */
@@ -43,20 +42,20 @@ typedef struct {
       OPDS  h;                              /* defined in cs.h */
   /*inputs and outputs */
   /* output first */
-      MYFLT     *aout;
+      cs_float     *aout;
   /* inputs in order */
   /* a rate */
-      MYFLT     *ain;
+      cs_float     *ain;
   /* i rate */
-      MYFLT     *bps;
-      MYFLT     *subdiv;
-      MYFLT     *barlength;     /* in beats */
-      MYFLT     *phrasebars;
-      MYFLT     *numrepeats;
+      cs_float     *bps;
+      cs_float     *subdiv;
+      cs_float     *barlength;     /* in beats */
+      cs_float     *phrasebars;
+      cs_float     *numrepeats;
       /* optionals */
-      MYFLT     *stutterspeed;  /* default 1 */
-      MYFLT     *stutterchance; /* default 0 */
-      MYFLT     *envelopingon;  /* default 1 */
+      cs_float     *stutterspeed;  /* default 1 */
+      cs_float     *stutterchance; /* default 0 */
+      cs_float     *envelopingon;  /* default 1 */
 
       /* integer values */
       int32_t Subdiv,Phrasebars,Numrepeats;
@@ -69,7 +68,7 @@ typedef struct {
       int32_t repeatsampdone;
       int32_t numbarsnow;
       /* unitblock can be a float if stutterspeed greater than 1 */
-      MYFLT unitblock,unitsleft,unitsdone;
+      cs_float unitblock,unitsleft,unitsdone;
       int32_t totalunits;
 
       int32_t repeats,repeatsdone;
@@ -89,22 +88,22 @@ typedef struct {
       OPDS  h;                              /*  defined in cs.h*/
       /* inputs and outputs */
       /* output first- stereo */
-      MYFLT     *aout1;
-      MYFLT     *aout2;
+      cs_float     *aout1;
+      cs_float     *aout2;
       /* inputs in order */
       /* arate, stereo ins */
-      MYFLT     *ain1;
-      MYFLT     *ain2;
+      cs_float     *ain1;
+      cs_float     *ain2;
       /* i rate */
-      MYFLT     *bps;
-      MYFLT     *subdiv;
-      MYFLT     *barlength;     /* in beats */
-      MYFLT     *phrasebars;
-      MYFLT     *numrepeats;
+      cs_float     *bps;
+      cs_float     *subdiv;
+      cs_float     *barlength;     /* in beats */
+      cs_float     *phrasebars;
+      cs_float     *numrepeats;
       /* optionals */
-      MYFLT     *stutterspeed;  /* default 1 */
-      MYFLT     *stutterchance; /* default 0 */
-      MYFLT     *envelopingon;  /* default 1 */
+      cs_float     *stutterspeed;  /* default 1 */
+      cs_float     *stutterchance; /* default 0 */
+      cs_float     *envelopingon;  /* default 1 */
 
       /* integer values */
       int32_t Subdiv,Phrasebars,Numrepeats;
@@ -118,7 +117,7 @@ typedef struct {
 
       int32_t numbarsnow;
       /* unitblock can be a float if stutterspeed greater than 1 */
-      MYFLT unitblock,unitsleft,unitsdone;
+      cs_float unitblock,unitsleft,unitsdone;
       int32_t totalunits;
 
       int32_t repeats,repeatsdone;

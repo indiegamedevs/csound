@@ -15,8 +15,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_STD_UTIL_H
@@ -44,6 +43,7 @@ extern int32_t scale_init_(CSOUND *);
 extern int32_t sndinfo_init_(CSOUND *);
 extern int32_t srconv_init_(CSOUND *);
 extern int32_t xtrct_init_(CSOUND *);
-
+extern int32_t smf_conv_init_(CSOUND *);
+extern int32_t mkir_init_(CSOUND *);
 #endif  /* CSOUND_STD_UTIL_H */
 

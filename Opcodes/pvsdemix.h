@@ -16,8 +16,7 @@
 
           You should have received a copy of the GNU Lesser General Public
           License along with Csound; if not, write to the Free Software
-          Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-          02110-1301 USA
+          Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 
 PVSDEMIX:
 De-mixing of stereo sources.
@@ -52,9 +51,9 @@ typedef struct _pvsdemix {
         PVSDAT  *fout;
         PVSDAT  *finleft;
         PVSDAT  *finright;
-        MYFLT   *pos;
-        MYFLT   *width;
-        MYFLT   *slices;
+        cs_float   *pos;
+        cs_float   *width;
+        cs_float   *slices;
         AUXCH   left;
         AUXCH   right;
         AUXCH   maxl;

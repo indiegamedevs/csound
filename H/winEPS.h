@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
    /*                             */
@@ -26,8 +25,10 @@
    /*                             */
 
   /* Open PS file & write header */
+#pragma once
+
 void PS_MakeGraph(CSOUND *csound, WINDAT *wdptr, const char *name);
   /* Make one plot per page      */
 void PS_DrawGraph(CSOUND *csound, WINDAT *wdptr);
-int  PS_ExitGraph(CSOUND *csound);      /* Write PS trailer             */
+int32_t  PS_ExitGraph(CSOUND *csound);      /* Write PS trailer             */
 

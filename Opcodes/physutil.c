@@ -17,16 +17,19 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /* This file contains a collection of utilities for the Physical Model
    opcodes, in no particular order
 */
 
-// #include "csdl.h"
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
+#endif
+
 #include <stdlib.h>
 #include "physutil.h"
 
@@ -36,13 +39,12 @@
 /*  White noise as often as you like.      */
 /*******************************************/
 
-/* Return random MYFLT float between -1.0 and 1.0 */
+/* Return random cs_float float between -1.0 and 1.0 */
 
-MYFLT Noise_tick(CSOUND *csound, Noise *n)
+cs_float Noise_tick(CSOUND *csound, Noise *n)
 {
-    MYFLT temp;
-    temp = (MYFLT) csound->Rand31(&(csound->randSeed1)) - FL(1073741823.5);
-    temp *= (MYFLT) (1.0 / 1073741823.0);
+    cs_float temp = (cs_float) csound->Rand31(csound->RandSeed31(csound)) - FL(1073741823.5);
+    temp *= (cs_float) (1.0 / 1073741823.0);
     *n = (Noise) temp;
     return temp;
 }
@@ -61,40 +63,40 @@ MYFLT Noise_tick(CSOUND *csound, Noise *n)
 void make_DLineL(CSOUND *csound, DLineL *p, int32 max_length)
 {
     p->length = max_length;
-    csound->AuxAlloc(csound, max_length * sizeof(MYFLT), &p->inputs);
+    csound->AuxAlloc(csound, max_length * sizeof(cs_float), &p->inputs);
     p->outPoint = 0;
     p->lastOutput = FL(0.0);
     p->inPoint = max_length >> 1;
 }
 
-void DLineL_setDelay(DLineL *p, MYFLT lag)
+void DLineL_setDelay(DLineL *p, cs_float lag)
 {
-    MYFLT outputPointer = p->inPoint - lag; /* read chases write, +1 for interp. */
+    cs_float outputPointer = p->inPoint - lag; /* read chases write, +1 for interp. */
     while (outputPointer<FL(0.0))
-      outputPointer += (MYFLT)p->length;           /* modulo maximum length */
-    while (outputPointer>=(MYFLT)p->length)
-      outputPointer -= (MYFLT)p->length;           /* modulo maximum length */
+      outputPointer += (cs_float)p->length;           /* modulo maximum length */
+    while (outputPointer>=(cs_float)p->length)
+      outputPointer -= (cs_float)p->length;           /* modulo maximum length */
     p->outPoint = (int32) outputPointer;           /* integer part */
-    p->alpha = outputPointer - (MYFLT)p->outPoint; /* fractional part */
+    p->alpha = outputPointer - (cs_float)p->outPoint; /* fractional part */
     p->omAlpha = FL(1.0) - p->alpha;               /* 1.0 - fractional part */
 }
 
-MYFLT DLineL_tick(DLineL *p, MYFLT sample) /* Take one, yield one */
+cs_float DLineL_tick(DLineL *p, cs_float sample) /* Take one, yield one */
 {
-    MYFLT lastOutput;
+    cs_float lastOutput;
 
-    ((MYFLT*)p->inputs.auxp)[p->inPoint++] = sample; /*  Input next sample */
+    ((cs_float*)p->inputs.auxp)[p->inPoint++] = sample; /*  Input next sample */
     if (UNLIKELY( p->inPoint ==  p->length))         /* Check for end condition */
       p->inPoint -= p->length;
                                 /* first 1/2 of interpolation */
-    lastOutput = ((MYFLT*)p->inputs.auxp)[p->outPoint++] * p->omAlpha;
+    lastOutput = ((cs_float*)p->inputs.auxp)[p->outPoint++] * p->omAlpha;
     if ( p->outPoint< p->length) {         /*  Check for end condition */
                                 /* second 1/2 of interpolation    */
-      lastOutput += ((MYFLT*)p->inputs.auxp)[p->outPoint] * p->alpha;
+      lastOutput += ((cs_float*)p->inputs.auxp)[p->outPoint] * p->alpha;
     }
     else {                      /*  if at end . . .  */
                                 /* second 1/2 of interpolation */
-      lastOutput +=  ((MYFLT*)p->inputs.auxp)[0]*p->alpha;
+      lastOutput +=  ((cs_float*)p->inputs.auxp)[0]*p->alpha;
       p->outPoint -=  p->length;
     }
     return (p->lastOutput = lastOutput);
@@ -128,10 +130,10 @@ void Envelope_keyOff(Envelope *e)
     if (e->value != e->target) e->state = 1;
 }
 
-void Envelope_setRate(CSOUND *csound, Envelope *e, MYFLT aRate)
+void Envelope_setRate(CSOUND *csound, Envelope *e, cs_float aRate)
 {
     if (UNLIKELY(aRate < FL(0.0))) {
-        csound->Warning(csound, Str("negative rates not "
+        csound->Warning(csound, "%s", Str("negative rates not "
                                     "allowed!!, correcting\n"));
         e->rate = -aRate;
     }
@@ -141,20 +143,20 @@ void Envelope_setRate(CSOUND *csound, Envelope *e, MYFLT aRate)
     //           e->rate, e->value, e->target);
 }
 
-void Envelope_setTarget(Envelope *e, MYFLT aTarget)
+void Envelope_setTarget(Envelope *e, cs_float aTarget)
 {
     e->target = aTarget;
     if (e->value != e->target) e->state = 1;
 }
 
-void Envelope_setValue(Envelope *e, MYFLT aValue)
+void Envelope_setValue(Envelope *e, cs_float aValue)
 {
     e->state = 0;
     e->target = aValue;
     e->value = aValue;
 }
 
-MYFLT Envelope_tick(Envelope *e)
+cs_float Envelope_tick(Envelope *e)
 {
     //    printf("(Envelope_tick: %p state=%d target=%f, rate=%f, value=%f => ", e,
     //           e->state, e->target, e->rate, e->value);
@@ -208,7 +210,7 @@ void make_OnePole(OnePole* p)
     p->outputs = FL(0.0);
 }
 
-void OnePole_setPole(OnePole* p, MYFLT aValue)
+void OnePole_setPole(OnePole* p, cs_float aValue)
 {
     p->poleCoeff = aValue;
     if (p->poleCoeff > FL(0.0))           /*  Normalize gain to 1.0 max */
@@ -217,7 +219,7 @@ void OnePole_setPole(OnePole* p, MYFLT aValue)
       p->sgain = p->gain * (FL(1.0) + p->poleCoeff);
 }
 
-void OnePole_setGain(OnePole* p, MYFLT aValue)
+void OnePole_setGain(OnePole* p, cs_float aValue)
 {
     p->gain = aValue;
     if (p->poleCoeff > FL(0.0))
@@ -226,7 +228,7 @@ void OnePole_setGain(OnePole* p, MYFLT aValue)
       p->sgain = p->gain * (FL(1.0) + p->poleCoeff);
 }
 
-MYFLT OnePole_tick(OnePole* p, MYFLT sample)  /*   Perform Filter Operation */
+cs_float OnePole_tick(OnePole* p, cs_float sample)  /*   Perform Filter Operation */
 {
     p->outputs = (p->sgain * sample) + (p->poleCoeff * p->outputs);
     return p->outputs;
@@ -257,7 +259,7 @@ void make_DCBlock(DCBlock* p)
     p->inputs = FL(0.0);
 }
 
-MYFLT DCBlock_tick(DCBlock* p, MYFLT sample)
+cs_float DCBlock_tick(DCBlock* p, cs_float sample)
 {
     p->outputs = sample - p->inputs + FL(0.99) * p->outputs;
     p->inputs = sample;
@@ -277,7 +279,7 @@ MYFLT DCBlock_tick(DCBlock* p, MYFLT sample)
 /*  2 = S, 3 = R)                          */
 /*******************************************/
 
-void make_ADSR(ADSR *a)
+void make_ADSR(ADSR *a, cs_float sr)
 {
     make_Envelope((Envelope*)a);
     a->target = FL(0.0);
@@ -287,6 +289,7 @@ void make_ADSR(ADSR *a)
     a->sustainLevel = FL(0.5);
     a->releaseRate = FL(0.01);
     a->state = ATTACK;
+    a->sr = sr;
 }
 
 void ADSR_keyOn(ADSR *a)
@@ -303,81 +306,81 @@ void ADSR_keyOff(ADSR *a)
     a->state = RELEASE;
 }
 
-void ADSR_setAttackRate(CSOUND *csound, ADSR *a, MYFLT aRate)
+void ADSR_setAttackRate(CSOUND *csound, ADSR *a, cs_float aRate)
 {
     if (UNLIKELY(aRate < FL(0.0))) {
-      csound->Warning(csound, Str("negative rates not allowed!!,"
+      csound->Warning(csound, "%s", Str("negative rates not allowed!!,"
                                   " correcting\n"));
       a->attackRate = -aRate;
     }
     else a->attackRate = aRate;
-    a->attackRate *= RATE_NORM;
+    a->attackRate *= (FL(22050.0)/a->sr);
 }
 
-void ADSR_setDecayRate(CSOUND *csound, ADSR *a, MYFLT aRate)
+void ADSR_setDecayRate(CSOUND *csound, ADSR *a, cs_float aRate)
 {
     if (UNLIKELY(aRate < FL(0.0))) {
       csound->Warning(csound,
-                      Str("negative rates not allowed!!, correcting\n"));
+                      "%s", Str("negative rates not allowed!!, correcting\n"));
       a->decayRate = -aRate;
     }
     else a->decayRate = aRate;
-    a->decayRate *= RATE_NORM;
+    a->decayRate *= (FL(22050.0)/a->sr);
 }
 
-void ADSR_setSustainLevel(CSOUND *csound, ADSR *a, MYFLT aLevel)
+void ADSR_setSustainLevel(CSOUND *csound, ADSR *a, cs_float aLevel)
 {
     if (UNLIKELY(aLevel < FL(0.0) )) {
       csound->Warning(csound,
-                      Str("Sustain level out of range!!, correcting\n"));
+                      "%s", Str("Sustain level out of range!!, correcting\n"));
       a->sustainLevel = FL(0.0);
     }
     else a->sustainLevel = aLevel;
 }
 
-void ADSR_setReleaseRate(CSOUND *csound, ADSR *a, MYFLT aRate)
+void ADSR_setReleaseRate(CSOUND *csound, ADSR *a, cs_float aRate)
 {
     if (UNLIKELY(aRate < FL(0.0))) {
       csound->Warning(csound,
-                      Str("negative rates not allowed!!, correcting\n"));
+                      "%s", Str("negative rates not allowed!!, correcting\n"));
       a->releaseRate = -aRate;
     }
     else a->releaseRate = aRate;
-    a->releaseRate *= RATE_NORM;
+    a->releaseRate *= (FL(22050.0)/a->sr);
 }
 
-void ADSR_setAttackTime(CSOUND *csound, ADSR *a, MYFLT aTime)
+static void ADSR_setAttackTime(CSOUND *csound, ADSR *a, cs_float aTime)
 {
     if (UNLIKELY(aTime < FL(0.0))) {
       csound->Warning(csound,
-                      Str("negative times not allowed!!, correcting\n"));
-      a->attackRate = FL(1.0) /(-aTime*CS_ESR);
+                      "%s", Str("negative times not allowed!!, correcting\n"));
+      a->attackRate = FL(1.0) /(-aTime*a->sr);
     }
-    else a->attackRate = FL(1.0) / (aTime*CS_ESR);
+    else a->attackRate = FL(1.0) / (aTime*a->sr);
 }
 
-void ADSR_setDecayTime(CSOUND *csound, ADSR *a, MYFLT aTime)
+static void ADSR_setDecayTime(CSOUND *csound, ADSR *a, cs_float aTime)
 {
     if (UNLIKELY(aTime < FL(0.0))) {
       csound->Warning(csound,
-                      Str("negative times not allowed!!, correcting\n"));
-      a->decayRate = FL(1.0) /(-aTime*CS_ESR);
+                      "%s", Str("negative times not allowed!!, correcting\n"));
+      a->decayRate = FL(1.0) /(-aTime*a->sr);
     }
-    else a->decayRate = FL(1.0) / (aTime*CS_ESR);
+    else a->decayRate = FL(1.0) / (aTime*a->sr);
 }
 
-void ADSR_setReleaseTime(CSOUND *csound, ADSR *a, MYFLT aTime)
+static void ADSR_setReleaseTime(CSOUND *csound, ADSR *a, cs_float aTime)
 {
     if (UNLIKELY(aTime < FL(0.0))) {
       csound->Warning(csound,
-                      Str("negative times not allowed!!, correcting\n"));
-      a->releaseRate = FL(1.0) /(-aTime*CS_ESR);
+                      "%s", Str("negative times not allowed!!, correcting\n"));
+      a->releaseRate = FL(1.0) /(-aTime*a->sr);
     }
-    else a->releaseRate = FL(1.0) / (aTime*CS_ESR);
+    else a->releaseRate = FL(1.0) / (aTime*a->sr);
 }
 
-void ADSR_setAllTimes(CSOUND *csound, ADSR *a, MYFLT attTime, MYFLT decTime,
-                      MYFLT susLevel, MYFLT relTime)
+void ADSR_setAllTimes(CSOUND *csound, ADSR *a, cs_float attTime, cs_float decTime,
+                      cs_float susLevel, cs_float relTime)
 {
     ADSR_setAttackTime(csound, a, attTime);
     ADSR_setDecayTime(csound, a, decTime);
@@ -385,8 +388,8 @@ void ADSR_setAllTimes(CSOUND *csound, ADSR *a, MYFLT attTime, MYFLT decTime,
     ADSR_setReleaseTime(csound, a, relTime);
 }
 
-void ADSR_setAll(CSOUND *csound, ADSR *a, MYFLT attRate, MYFLT decRate,
-                 MYFLT susLevel, MYFLT relRate)
+void ADSR_setAll(CSOUND *csound, ADSR *a, cs_float attRate, cs_float decRate,
+                 cs_float susLevel, cs_float relRate)
 {
     ADSR_setAttackRate(csound, a, attRate);
     ADSR_setDecayRate(csound, a, decRate);
@@ -394,7 +397,7 @@ void ADSR_setAll(CSOUND *csound, ADSR *a, MYFLT attRate, MYFLT decRate,
     ADSR_setReleaseRate(csound, a, relRate);
 }
 
-void ADSR_setTarget(CSOUND *csound, ADSR *a, MYFLT aTarget)
+void ADSR_setTarget(CSOUND *csound, ADSR *a, cs_float aTarget)
 {
     a->target = aTarget;
     if (a->value <a-> target) {
@@ -409,7 +412,7 @@ void ADSR_setTarget(CSOUND *csound, ADSR *a, MYFLT aTarget)
     }
 }
 
-void ADSR_setValue(CSOUND *csound, ADSR *a, MYFLT aValue)
+void ADSR_setValue(CSOUND *csound, ADSR *a, cs_float aValue)
 {
     a->state = SUSTAIN;
     a->target = aValue;
@@ -418,7 +421,7 @@ void ADSR_setValue(CSOUND *csound, ADSR *a, MYFLT aValue)
     a->rate = FL(0.0);
 }
 
-MYFLT ADSR_tick(ADSR *a)
+cs_float ADSR_tick(ADSR *a)
 {
     if (a->state==ATTACK) {
       a->value += a->rate;
@@ -475,21 +478,21 @@ void BiQuad_clear(BiQuad *b)
     b->lastOutput = FL(0.0);
 }
 
-void BiQuad_setPoleCoeffs(BiQuad *b, MYFLT *coeffs)
+void BiQuad_setPoleCoeffs(BiQuad *b, const cs_float *coeffs)
 {
     b->poleCoeffs[0] = coeffs[0];
     b->poleCoeffs[1] = coeffs[1];
 }
 
-void BiQuad_setZeroCoeffs(BiQuad *b, MYFLT *coeffs)
+void BiQuad_setZeroCoeffs(BiQuad *b, const cs_float *coeffs)
 {
     b->zeroCoeffs[0] = coeffs[0];
     b->zeroCoeffs[1] = coeffs[1];
 }
 
-MYFLT BiQuad_tick(BiQuad *b, MYFLT sample) /*   Perform Filter Operation   */
+cs_float BiQuad_tick(BiQuad *b, cs_float sample) /*   Perform Filter Operation   */
 {                               /*  Biquad is two pole, two zero filter  */
-    MYFLT temp;                 /*  Look it up in your favorite DSP text */
+    cs_float temp;                 /*  Look it up in your favorite DSP text */
 
     temp = sample * b->gain;                     /* Here's the math for the  */
     temp += b->inputs[0] * b->poleCoeffs[0];     /* version which implements */

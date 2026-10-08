@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /* svfilter.h
@@ -33,10 +32,12 @@
  *
  */
 
+#pragma once
+
 typedef struct {
         OPDS h;
-  MYFLT *low, *high, *band, *in, *kfco, *kq, *iscl, *iskip;
-        MYFLT ynm1, ynm2;
+  cs_float *low, *high, *band, *in, *kfco, *kq, *iscl, *iskip;
+        cs_float ynm1, ynm2;
 } SVF;
 
 /* hilbert.h
@@ -52,8 +53,8 @@ typedef struct {
 
 typedef struct {
         OPDS h;
-        MYFLT *out1, *out2, *in;
-        MYFLT xnm1[12], ynm1[12], coef[12];
+        cs_float *out1, *out2, *in;
+        cs_float xnm1[12], ynm1[12], coef[12];
 } HILBERT;
 
 /* resonrz.h
@@ -69,33 +70,33 @@ typedef struct {
 
 typedef struct {
         OPDS h;
-        MYFLT *out, *in, *kcf, *kbw, *iscl, *istor;
-        double xnm1, xnm2, ynm1, ynm2;
+        cs_float *out, *in, *kcf, *kbw, *iscl, *istor;
+        cs_double xnm1, xnm2, ynm1, ynm2;
         int32_t scaletype, aratemod;
 } RESONZ;
 
 /* Structure for cascade of 2nd order allpass filters */
 typedef struct {
         OPDS h;
-        MYFLT *out, *in, *kbf, *kbw, *order, *mode, *ksep, *fbgain;
+        cs_float *out, *in, *kbf, *kbw, *order, *mode, *ksep, *fbgain, *iskip;
         int32_t loop, modetype;
-        MYFLT *nm1, *nm2, feedback;
+        cs_double *nm1, *nm2, feedback;
         AUXCH aux1, aux2;
 } PHASER2;
 
 /* Structure for cascade of 1st order allpass filters*/
 typedef struct {
         OPDS h;
-        MYFLT *out, *in, *kcoef, *iorder, *fbgain, *istor;
+        cs_float *out, *in, *kcoef, *iorder, *fbgain, *istor;
         int32_t
         loop;
-        MYFLT *xnm1, *ynm1, feedback;
+        cs_float *xnm1, *ynm1, feedback;
         AUXCH auxx, auxy;
 } PHASER1;
 
 /* Structure for lowpass filter */
 typedef struct {
         OPDS h;
-        MYFLT *out, *in, *kfco, *kres, *istor;
-        double ynm1, ynm2;
+        cs_float *out, *in, *kfco, *kres, *istor;
+        cs_double ynm1, ynm2;
 } LP2;

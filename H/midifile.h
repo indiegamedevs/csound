@@ -1,7 +1,7 @@
 /*
     midifile.h:
 
-    Copyright (C) 2005 Istvan Varga
+    Copyright (C) 2005 Istvan Varga, (C) 2025 Victor Lazzarini
 
     This file is part of Csound.
 
@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_MIDIFILE_H
@@ -30,28 +29,59 @@ extern "C" {
 
 /* open MIDI file, read all tracks, and create event list */
 
-int csoundMIDIFileOpen(CSOUND *csound, const char *name);
+int32_t csoundMIDIFileOpen(CSOUND *csound, const char *name);
 
 /* read MIDI file event data at performace time */
 
-int csoundMIDIFileRead(CSOUND *csound, unsigned char *buf, int nBytes);
+int32_t csoundMIDIFileRead(CSOUND *csound, unsigned char *buf, int32_t nBytes);
 
 /* destroy MIDI file event list */
 
-int csoundMIDIFileClose(CSOUND *csound);
+int32_t csoundMIDIFileClose(CSOUND *csound);
 
  /* ------------------------------------------------------------------------ */
 
 typedef struct {
     OPDS    h;
-    MYFLT   *kResult;
+    cs_float   *kResult;
+    cs_float   *num;
 } MIDITEMPO;
 
+typedef struct {
+    OPDS    h;
+    cs_float *res;
+    STRINGDAT *mfile;
+    cs_float *port;
+} MFILE;
+
+
+typedef struct {
+    OPDS    h;
+    cs_float   *kstat;
+    cs_float   *kchn;
+    cs_float   *kdat1;
+    cs_float   *kdat2;
+    cs_float   *ktime;
+    cs_float   *kevt;
+    cs_float   *num;
+} MIDIFEVT;  
+  
 /* miditempo opcode: returns the current tempo of MIDI file */
 
-extern int midiTempoOpcode(CSOUND *csound, MIDITEMPO *p);
-extern int midiFileStatus(CSOUND *csound, MIDITEMPO *p);
-
+  int32_t midi_tempo_opcode(CSOUND *csound, MIDITEMPO *p);
+  int32_t midi_file_status(CSOUND *csound, MIDITEMPO *p);
+  int32_t midi_file_loop(CSOUND *csound, MIDITEMPO *p);  
+  int32_t midi_file_opcode(CSOUND *csound, void *p);
+  int32_t midi_file_mute(CSOUND *csound, void *p);
+  int32_t midi_file_pause(CSOUND *csound, void *p);
+  int32_t midi_file_play(CSOUND *csound, void *p);
+  int32_t midi_file_rewind(CSOUND *csound, void *p);
+  int32_t midi_file_len(CSOUND *csound, void *p);
+  int32_t midi_set_tempo(CSOUND *csound, void *p);
+  int32_t midi_set_pos(CSOUND *csound, void *pp);
+  int32_t midi_get_pos(CSOUND *csound, void *pp);
+  int32_t midi_file_get_number_events(CSOUND *csound, void *p);
+  int32_t midi_file_get_event(CSOUND *csound, void *p);
 #ifdef __cplusplus
 }
 #endif

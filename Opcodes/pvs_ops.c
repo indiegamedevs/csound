@@ -17,14 +17,13 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "pvs_ops.h"
 
 /*
-PUBLIC int32_t csoundModuleCreate(CSOUND *csound)
+ int32_t csoundModuleCreate(CSOUND *csound)
 {
     (void) csound;
     return 0;
@@ -42,15 +41,27 @@ int32_t pvsopc_ModuleInit(CSOUND *csound)
     err |= pvscent_init_(csound);
     err |= pvsdemix_init_(csound);
     err |= pvsband_init_(csound);
+    err |= pvsbuffer_localops_init_(csound);
+    err |= pvsgendy_localops_init_(csound);
 
     return (err ? CSOUND_ERROR : CSOUND_SUCCESS);
 }
 
-/*
-PUBLIC int32_t csoundModuleInfo(void)
-{s
-    return ((CS_APIVERSION << 16) + (CS_APISUBVER << 8) + (int32_t
-) sizeof(MYFLT));
+#ifdef BUILD_PLUGINS
+
+ int32_t csoundModuleCreate(CSOUND *csound) {  
+        return 0;
 }
-*/
+
+ int32_t csoundModuleInit(CSOUND *csound) {
+  return pvsopc_ModuleInit(csound);
+}
+
+ int32_t csoundModuleInfo(void)
+{
+  return CSOUND_MODULE_INFO;
+}
+
+#endif
+
 

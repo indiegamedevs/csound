@@ -1,0 +1,76 @@
+<CsTest>
+description = "arrays of structs"
+
+[expect]
+exit = 0
+</CsTest>
+<CsoundSynthesizer>
+<CsInstruments>
+
+sr	=	44100
+ksmps	=	1
+nchnls	=	2
+0dbfs	=	1
+
+#include "../libassert.orc"
+
+struct MyType imaginary:i, real:i
+
+opcode processMyType(dummy:i[], input:MyType[]):i
+data:MyType[] init lenarray(input)
+ilen = lenarray(input)
+print ilen
+assertEquals(ilen, 4)
+indx = 0
+while (indx < ilen) do
+  data[indx] = input[indx]
+  temp:MyType = input[indx]
+  print temp.imaginary
+  assertEquals(temp.imaginary, indx * 4)
+  print temp.real
+  assertEquals(temp.real, (indx + 1) * 4)
+  indx += 1
+od
+indx = 0
+
+xout 0
+endop
+
+instr 1
+
+var0:MyType[] init 4
+
+indx = 0
+
+while (indx < 4) do
+
+  temp:MyType = var0[indx]
+  temp.imaginary = (indx * 2)
+  temp.real = (indx + 1) * 2
+  var0[indx] = temp
+
+  var0[indx].imaginary = (indx * 2) * 2
+  var0[indx].real = ((indx + 1) * 2) * 2
+  print var0[indx].real
+  assertEquals(var0[indx].real, (indx + 1) * 4)
+  print var0[indx].imaginary
+  assertEquals(var0[indx].imaginary, indx * 4)
+
+  indx += 1
+
+od
+indx = 0
+
+idummy[] init 2
+itest = processMyType(idummy, var0)
+
+endin
+
+</CsInstruments>
+; ==============================================
+<CsScore>
+i1 0 0.5
+
+
+</CsScore>
+</CsoundSynthesizer>

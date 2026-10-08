@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"         /*                           WINDIN.C   */
@@ -26,7 +25,7 @@
 #include "windin.h"             /* real-time input control units        */
                                 /* 26aug90 dpwe                         */
 
-int xyinset(CSOUND *csound, XYIN *p)
+int32_t xyinset(CSOUND *csound, XYIN *p)
 {
     // This is not the way to do it; set _QQ in interlocks
     IGN(p);
@@ -34,23 +33,23 @@ int xyinset(CSOUND *csound, XYIN *p)
                              Str("xyin opcode has been deprecated in Csound6."));
 }
 
-/* static int deinit_func(CSOUND *csound, void *p) */
+/* static int32_t deinit_func(CSOUND *csound, void *p) */
 /* { */
 /*     csound->csoundKillXYinCallback_(csound, &(((XYIN*) p)->w)); */
 /*     return OK; */
 /* } */
 
-/* int xyinset(CSOUND *csound, XYIN *p) */
+/* int32_t xyinset(CSOUND *csound, XYIN *p) */
 /* { */
-/*     MYFLT   x, y; */
-/*     MYFLT   iymax  = *p->iymax; */
-/*     MYFLT   iymin  = *p->iymin; */
-/*     MYFLT   ixmax  = *p->ixmax; */
-/*     MYFLT   ixmin  = *p->ixmin; */
-/*     MYFLT   iyinit = *p->iyinit; */
-/*     MYFLT   ixinit = *p->ixinit; */
+/*     cs_float   x, y; */
+/*     cs_float   iymax  = *p->iymax; */
+/*     cs_float   iymin  = *p->iymin; */
+/*     cs_float   ixmax  = *p->ixmax; */
+/*     cs_float   ixmin  = *p->ixmin; */
+/*     cs_float   iyinit = *p->iyinit; */
+/*     cs_float   ixinit = *p->ixinit; */
 
-/*     if (UNLIKELY((p->timcount = (int)(CS_EKR * *p->iprd + FL(0.5)))<=0)) { */
+/*     if (UNLIKELY((p->timcount = (int32_t)(CS_EKR * *p->iprd + FL(0.5)))<=0)) { */
 /*       return csound->InitError(csound, Str("illegal iprd")); */
 /*     } */
 /*     if (UNLIKELY(iymin > iymax)) {        /\* swap if wrong order *\/ */
@@ -84,7 +83,7 @@ int xyinset(CSOUND *csound, XYIN *p)
 /*     return OK; */
 /* } */
 
-/* int xyin(CSOUND *csound, XYIN *p) */
+/* int32_t xyin(CSOUND *csound, XYIN *p) */
 /* { */
 /*     if (UNLIKELY(!(--p->countdown))) {            /\* at each countdown   *\/ */
 /*       p->countdown = p->timcount;                 /\*   reset counter &   *\/ */

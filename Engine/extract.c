@@ -17,16 +17,14 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"
 #include "sysdep.h"                                 /*    EXTRACT.C   */
 #include "extract.h"
-
-extern  int     realtset(CSOUND *, SRTBLK *);
-extern  MYFLT   realt(CSOUND *, MYFLT);
+#include "prototyp.h"
+#include "sread.h"
 
 static  void    include(EXTRACT_STATICS*, SRTBLK *);
 
@@ -57,7 +55,7 @@ static void alloc_globals(EXTRACT_STATICS* extractStatics)
 void readxfil(CSOUND *csound, EXTRACT_STATICS* extractStatics,
               FILE *xfp)    /* read the extract control file */
 {
-    int  flag, all;
+    int32_t  flag, all;
     char s[128];
 
     alloc_globals(extractStatics);
@@ -68,7 +66,7 @@ void readxfil(CSOUND *csound, EXTRACT_STATICS* extractStatics,
     extractStatics->offsect = 999;  extractStatics->offbeat = FL(0.0);
     while (fscanf(xfp, "%100s", s) > 0) {
       char *c = s;
-      int i;
+      int32_t i;
       //printf("string: %s\n", s);
       switch (*c) {
       case 'i':
@@ -91,7 +89,7 @@ void readxfil(CSOUND *csound, EXTRACT_STATICS* extractStatics,
         case 'f':
           //printf("f: %s\n", s);
 #if defined(USE_DOUBLE)
-          CS_SSCANF(s, "%d:%lf", &extractStatics->onsect, &extractStatics->onbeat);
+          CS_SSCANF(s, "%d:%" CS_DOUBLE_SCAN, &extractStatics->onsect, &extractStatics->onbeat);
 #else
           CS_SSCANF(s, "%d:%f", &extractStatics->onsect, &extractStatics->onbeat);
 #endif
@@ -100,7 +98,7 @@ void readxfil(CSOUND *csound, EXTRACT_STATICS* extractStatics,
           //printf("t: %s\n");
           extractStatics->offsect = extractStatics->onsect; /* default offsect */
 #if defined(USE_DOUBLE)
-          CS_SSCANF(s, "%d:%lf", &extractStatics->offsect,&extractStatics->offbeat);
+          CS_SSCANF(s, "%d:%" CS_DOUBLE_SCAN, &extractStatics->offsect,&extractStatics->offbeat);
 #else
           CS_SSCANF(s, "%d:%f", &extractStatics->offsect, &extractStatics->offbeat);
 #endif
@@ -123,8 +121,8 @@ void extract(CSOUND *csound, EXTRACT_STATICS* extractStatics)
  /* extract instr events within the time period */
 {
     SRTBLK  *bp;
-    MYFLT   turnoff, anticip;
-    int     warped;
+    cs_float   turnoff, anticip;
+    int32_t     warped;
 
     alloc_globals(extractStatics);
 

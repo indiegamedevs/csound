@@ -1,89 +1,298 @@
-cmake_minimum_required(VERSION 3.5)
 
-
-set(TEST_ARGS "-+env:OPCODE6DIR64=${CMAKE_CURRENT_BINARY_DIR}/../..")
-
-# Tests that depend on cunit
-find_library(CUNIT_LIBRARY cunit)
-check_deps(BUILD_TESTS CUNIT_LIBRARY BUILD_STATIC_LIBRARY)
 if(BUILD_TESTS)
+cmake_minimum_required(VERSION 3.20)
+include(CTest)
+ if(USE_VCPKG AND NOT ANDROID AND NOT EMSCRIPTEN AND NOT IOS)
+    find_package(GTest CONFIG REQUIRED)
+ else()
+    find_package(GTest)
+ endif()
+    check_deps(BUILD_TESTS BUILD_STATIC_LIBRARY)
+endif()
 
-ENABLE_TESTING()
+if(BUILD_TESTS)
+  add_executable(unittests
+        array_matrix_setters_test.cpp
+        array_ops_test.cpp
+        array_size_conversion_test.cpp
+        audio_array_io_test.cpp
+        autocorr_test.cpp
+        lpc_lifetime_test.cpp
+        sfload_test.cpp
+        stsend_test.cpp
+        fixtures/stsend_test_opcode.c
+        lpc_cepstrum_test.cpp
+        memplay_test.cpp
+        strecv_test.cpp
+        fixtures/strecv_test_opcode.c
+        bpf_array_test.cpp
+        channel_tests.cpp
+        clip_test.cpp
+        convolution_outputs_test.cpp
+        controller_print_test.cpp
+        printsk_test.cpp
+        ftprint_test.cpp
+        csound_data_structures_test.cpp
+        csound_debug_callback_test.cpp
+        csound_debugger_test.cpp
+        csound_debug_fsig_globals_arrays_test.cpp
+        csound_message_buffer_test.cpp
+        csound_option_parser_test.cpp
+        csound_csd_compile_test.cpp
+        csound_orc_compile_test.cpp
+        csound_orc_semantics_test.cpp
+        csound_type_system_test.cpp
+        type_display_test.cpp
+        csound_circular_buffer_test.cpp
+        thread_result_test.cpp
+        vibrato_test.cpp
+        pitch_test.cpp
+        delayk_test.cpp
+        resonbnk_test.cpp
+        diode_ladder_test.cpp
+        seed_state_test.cpp
+        trigseq_test.cpp
+        interpolated_random_test.cpp
+        jitter2_test.cpp
+        score_expression_test.cpp
+        schedkwhen_test.cpp
+        schedule_string_test.cpp
+        nxtpow2_test.cpp
+        dct_test.cpp
+        engine_test.cpp
+        instance_variable_test.cpp
+        doppler_test.cpp
+        io_test.cpp
+        readline_host_test.cpp
+        local_ksmps_test.cpp
+        lfsr_test.cpp
+        serial_test.cpp
+        fixtures/serial_test_opcode.c
+        joystick_test.cpp
+        fixtures/joystick_test_opcode.c
+        arduino_test.cpp
+        cpumeter_test.cpp
+        fixtures/cpumeter_linux_test_opcode.c
+        fixtures/cpumeter_mach_test_opcode.c
+        osc_blob_test.cpp
+        oscraw_test.cpp
+        fixtures/oscraw_test_opcode.c
+        socksend_test.cpp
+        fixtures/socksend_test_opcode.c
+        sockrecv_test.cpp
+        fixtures/sockrecv_test_opcode.c
+        oscsend_test.cpp
+        oscbundle_test.cpp
+        internal_osc_decode_test.cpp
+        pvsinit_test.cpp
+        pvsftr_test.cpp
+        pvsftw_test.cpp
+        pvsgendy_test.cpp
+        pvsgain_test.cpp
+        pvsmix_test.cpp
+        fsig_assignment_test.cpp
+        pvsfromarray_test.cpp
+        pvsblur_test.cpp
+        pvsanal_test.cpp
+        pvstanal_test.cpp
+        pvscross_test.cpp
+        pvsmorph_test.cpp
+        pvsmaska_test.cpp
+        paulstretch_test.cpp
+        mixer_test.cpp
+        multitap_test.cpp
+        nreverb_test.cpp
+        midi_file_test.cpp
+        midi_realtime_input_test.cpp
+        midiarp_test.cpp
+        tableseg_test.cpp
+        table_copy_test.cpp
+        ftgentmp_test.cpp
+        gen01_test.cpp
+        opcode_deprecation_test.cpp
+        server_test.cpp
+        csound_plugin_opcode_test.cpp
+        thread_monitor_test.cpp
+        perfthread_test.cpp
+        thread_id_test.cpp
+        rt_audio_fade_test.cpp
+        csound_test_sndfile.cpp
+        analysis_file_safety_test.cpp
+        test_new_type.cpp
+        test_pfields.cpp
+        pfield_names_test.cpp
+        userrnd_test.cpp
+        ugen_test.cpp
+        ../../Opcodes/osc_blob.c
+    )
 
-add_executable(testCsoundTypeSystem csound_type_system_test.c)
-target_link_libraries(testCsoundTypeSystem ${CSOUNDLIB_STATIC} ${CUNIT_LIBRARY})
-set(testCsoundTypeSystem -D__BUILDING_LIBCSOUND)
-add_test(NAME testCsoundTypeSystem
-        COMMAND $<TARGET_FILE:testCsoundTypeSystem> ${TEST_ARGS})
+    target_sources(unittests PRIVATE mp3_state_test.cpp)
 
-add_executable(testCsoundMessageBuffer csound_message_buffer_test.c)
-include_directories("${CMAKE_CURRENT_BINARY_DIR}/../../H")
-target_link_libraries(testCsoundMessageBuffer ${CSOUNDLIB_STATIC} ${CUNIT_LIBRARY})
-add_test(NAME testCsoundMessageBuffer
-        COMMAND $<TARGET_FILE:testCsoundMessageBuffer> ${TEST_ARGS})
+    if(UNIX AND NOT IOS AND NOT EMSCRIPTEN AND NOT BARE_METAL AND
+       NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
+        target_sources(unittests PRIVATE runcommand_test.cpp)
+        if(NOT REQUIRE_PTHREADS)
+            target_compile_definitions(unittests PRIVATE
+                CSOUND_TEST_NO_PROCESS_BACKEND)
+        endif()
+    endif()
 
-add_executable(testCsoundOrcSemantics csound_orc_semantics_test.c)
-target_link_libraries(testCsoundOrcSemantics ${CSOUNDLIB_STATIC} ${CUNIT_LIBRARY})
-add_test(NAME testCsoundOrcSemantics
-        COMMAND $<TARGET_FILE:testCsoundOrcSemantics> ${TEST_ARGS})
+    if(REQUIRE_PTHREADS)
+        target_compile_definitions(unittests PRIVATE CSOUND_TEST_PTHREADS)
+    endif()
 
-add_executable(testCsoundOrcCompileTest csound_orc_compile_test.c)
-target_link_libraries(testCsoundOrcCompileTest ${CSOUNDLIB_STATIC} ${CUNIT_LIBRARY})
-add_test(NAME testCsoundOrcCompileTest
-        COMMAND $<TARGET_FILE:testCsoundOrcCompileTest> ${TEST_ARGS})
+    set(unittests_CFLAGS ${libcsound_CFLAGS})
+    list(REMOVE_ITEM unittests_CFLAGS -D__BUILDING_LIBCSOUND)
+    target_compile_options(unittests PRIVATE ${unittests_CFLAGS})
+    target_compile_features(unittests PUBLIC cxx_std_17)
 
-add_executable(testChannels channel_tests.c)
-include_directories("${CMAKE_CURRENT_BINARY_DIR}/../../H")
-target_link_libraries(testChannels ${CSOUNDLIB_STATIC} ${CUNIT_LIBRARY})
-add_test(NAME testChannels
-        COMMAND $<TARGET_FILE:testChannels> ${TEST_ARGS})
+    target_include_directories(${CSOUNDLIB} PRIVATE ${libcsound_private_include_dirs})
+    target_include_directories(${CSOUNDLIB} PUBLIC ${libcsound_public_include_dirs})
 
-add_executable(testCsoundDataStructures csound_data_structures_test.c)
-target_link_libraries(testCsoundDataStructures ${CSOUNDLIB_STATIC} ${CUNIT_LIBRARY})
-add_test(NAME testCsoundDataStructures
-        COMMAND $<TARGET_FILE:testCsoundDataStructures> ${TEST_ARGS})
+    target_link_libraries(unittests
+        PRIVATE
+            GTest::gtest_main
+            ${CSOUNDLIB_STATIC}
+    )
 
-add_executable(testIo io_test.c)
-target_link_libraries(testIo ${CSOUNDLIB_STATIC} ${CUNIT_LIBRARY})
-add_test(NAME testIo
-        COMMAND $<TARGET_FILE:testIo> ${TEST_ARGS})
+    if(NOT EMSCRIPTEN AND NOT IOS AND NOT BARE_METAL AND
+       NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
+        add_library(requested_opcode_test_plugin MODULE
+            fixtures/requested_opcode_plugin.c)
+        target_include_directories(requested_opcode_test_plugin PRIVATE
+            ${libcsound_private_include_dirs})
+        target_include_directories(requested_opcode_test_plugin PUBLIC
+            ${libcsound_public_include_dirs})
+        target_compile_definitions(requested_opcode_test_plugin PRIVATE
+            BUILD_PLUGINS)
+        set_target_properties(requested_opcode_test_plugin PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY
+                ${CMAKE_CURRENT_BINARY_DIR}/requested-opcode-plugin
+            RUNTIME_OUTPUT_DIRECTORY
+                ${CMAKE_CURRENT_BINARY_DIR}/requested-opcode-plugin)
+        add_dependencies(unittests requested_opcode_test_plugin)
+        file(GENERATE
+            OUTPUT
+                ${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>/requested_opcode_plugin_path.hpp
+            CONTENT
+                "#pragma once\n#define CSOUND_TEST_REQUESTED_OPCODE_PLUGIN R\"csound($<TARGET_FILE:requested_opcode_test_plugin>)csound\"\n"
+            TARGET requested_opcode_test_plugin)
+        target_include_directories(unittests PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>)
+        target_compile_definitions(unittests PRIVATE
+            CSOUND_TEST_HAS_REQUESTED_OPCODE_PLUGIN)
+    endif()
 
-add_executable(testCircularBuffer csound_circular_buffer_test.c)
-target_link_libraries(testCircularBuffer ${CSOUNDLIB_STATIC} ${CUNIT_LIBRARY} pthread)
-add_test(NAME testCircularBuffer
-        COMMAND $<TARGET_FILE:testCircularBuffer> minimal.csd ${TEST_ARGS})
+    # BUILD_OSC_OPCODES stays ON in the cache when check_deps disables it
+    # in Opcodes/, so require the target too.
+    if(BUILD_OSC_OPCODES AND TARGET osc)
+        add_dependencies(unittests osc)
+        # Give sanitizer tests a directory with only the OSC plugin.
+        set(TEST_OSC_PLUGIN_DIR
+            ${CMAKE_CURRENT_BINARY_DIR}/osc-plugin)
+        set(TEST_OSC_PLUGIN
+            ${TEST_OSC_PLUGIN_DIR}/$<TARGET_FILE_NAME:osc>)
+        add_custom_target(unittests_osc_plugin
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                ${TEST_OSC_PLUGIN_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:osc> ${TEST_OSC_PLUGIN_DIR}/
+            DEPENDS osc
+        )
+        add_dependencies(unittests unittests_osc_plugin)
+        if(USE_DOUBLE)
+            set(TEST_OSC_PLUGIN_ENV OPCODE7DIR64)
+        else()
+            set(TEST_OSC_PLUGIN_ENV OPCODE7DIR)
+        endif()
+        target_compile_definitions(unittests PRIVATE
+            CSOUND_TEST_OSC_PLUGIN_DIR="${TEST_OSC_PLUGIN_DIR}"
+            CSOUND_TEST_OSC_PLUGIN="${TEST_OSC_PLUGIN}"
+            CSOUND_TEST_OSC_PLUGIN_ENV="${TEST_OSC_PLUGIN_ENV}"
+        )
+    endif()
 
-#add_executable(testCscore cscore_tests.c)
-#target_link_libraries(testCscore ${CSOUNDLIB} ${CUNIT_LIBRARY} pthread)
-#add_test(NAME testCscore
-#        COMMAND $<TARGET_FILE:testCscore> ${CMAKE_SOURCE_DIR}/tests/c/ -arg2 ${TEST_ARGS})
+    if(TARGET dssi4cs)
+        add_library(dssi_test_plugin MODULE fixtures/dssi_test_plugin.c)
+        add_library(ladspa_test_plugin MODULE fixtures/dssi_test_plugin.c)
+        target_compile_definitions(ladspa_test_plugin PRIVATE DSSI_TEST_LADSPA)
+        include(CheckIncludeFiles)
+        check_include_files("alsa/asoundlib.h;dssi.h" DSSI_TEST_SYSTEM_HEADER)
+        if(NOT DSSI_TEST_SYSTEM_HEADER)
+            target_link_libraries(dssi_test_plugin PRIVATE dssi_headers)
+            target_link_libraries(ladspa_test_plugin PRIVATE dssi_headers)
+        endif()
+        add_executable(dssi_tests dssi_test.cpp)
+        target_link_libraries(dssi_tests PRIVATE GTest::gtest_main ${CSOUNDLIB})
+        target_compile_definitions(dssi_tests PRIVATE
+            CSOUND_TEST_DSSI_HOST="$<TARGET_FILE:dssi4cs>"
+            CSOUND_TEST_DSSI_PLUGIN="$<TARGET_FILE:dssi_test_plugin>"
+            CSOUND_TEST_LADSPA_PLUGIN="$<TARGET_FILE:ladspa_test_plugin>")
+        target_link_libraries(dssi_tests PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(dssi_tests dssi4cs dssi_test_plugin ladspa_test_plugin)
+        include(GoogleTest)
+        gtest_discover_tests(dssi_tests)
+    endif()
 
-add_executable(testPerfThread perfthread_test.cpp)
-target_link_libraries(testPerfThread ${CSOUNDLIB} ${CUNIT_LIBRARY} pthread libcsnd6)
-add_test(NAME testPerfThread
-        COMMAND $<TARGET_FILE:testPerfThread> ${CMAKE_SOURCE_DIR}/tests/c/ -arg2 ${TEST_ARGS})
+    include(GoogleTest)
+    gtest_discover_tests(unittests)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT EMSCRIPTEN AND
+       USE_ATOMIC_BUILTIN AND HAVE_ATOMIC_BUILTIN AND NOT IOS AND
+       NOT BARE_METAL AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
+        add_executable(diskin2_concurrency_tests
+            diskin2_concurrency_test.cpp fixtures/diskin2_concurrency.c)
+        target_compile_options(diskin2_concurrency_tests PRIVATE ${libcsound_CFLAGS})
+        target_include_directories(diskin2_concurrency_tests PRIVATE
+            ${libcsound_private_include_dirs} ${libcsound_public_include_dirs})
+        target_link_libraries(diskin2_concurrency_tests PRIVATE
+            GTest::gtest_main ${CSOUNDLIB_STATIC})
+        target_compile_features(diskin2_concurrency_tests PRIVATE cxx_std_17)
+        gtest_discover_tests(diskin2_concurrency_tests)
+    endif()
 
-add_executable(testDebugger csound_debugger_test.c)
-target_link_libraries(testDebugger ${CSOUNDLIB} ${CUNIT_LIBRARY} pthread libcsnd6)
-add_test(NAME testDebugger
-        COMMAND $<TARGET_FILE:testDebugger> ${CMAKE_SOURCE_DIR}/tests/c/ -arg2 ${TEST_ARGS})
+    if(NOT EMSCRIPTEN AND NOT IOS AND NOT BARE_METAL AND
+       NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
+        add_library(struct_test_plugin MODULE fixtures/struct_plugin.c)
+        # Deliberately expose only installed SDK headers to this plugin.
+        set_property(TARGET struct_test_plugin PROPERTY INCLUDE_DIRECTORIES
+            "${Csound_SOURCE_DIR}/include;${PROJECT_BINARY_DIR}/include")
+        if(USE_LIBSNDFILE)
+            target_include_directories(struct_test_plugin PRIVATE
+                $<TARGET_PROPERTY:SndFile::sndfile,INTERFACE_INCLUDE_DIRECTORIES>)
+        endif()
+        target_compile_definitions(struct_test_plugin PRIVATE BUILD_PLUGINS)
+        set_target_properties(struct_test_plugin PROPERTIES
+            SUFFIX "${CMAKE_SHARED_LIBRARY_SUFFIX}"
+            LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/struct-plugin
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/struct-plugin)
+        add_executable(plugin_struct_tests plugin_struct_test.cpp)
+        target_compile_options(plugin_struct_tests PRIVATE ${unittests_CFLAGS})
+        target_compile_features(plugin_struct_tests PRIVATE cxx_std_17)
+        target_link_libraries(plugin_struct_tests PRIVATE
+            GTest::gtest_main ${CSOUNDLIB_STATIC})
+        file(GENERATE
+            OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>/struct_plugin_path.hpp
+            CONTENT "#pragma once\n#define CSOUND_TEST_STRUCT_PLUGIN_DIR R\"csound($<TARGET_FILE_DIR:struct_test_plugin>)csound\"\n"
+            TARGET struct_test_plugin)
+        target_include_directories(plugin_struct_tests PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>)
+        add_dependencies(plugin_struct_tests struct_test_plugin)
+        add_dependencies(unittests plugin_struct_tests)
+        gtest_discover_tests(plugin_struct_tests)
+    endif()
 
+    add_executable(json_udt_tests json_udt_test.cpp)
+    target_compile_options(json_udt_tests PRIVATE ${unittests_CFLAGS})
+    target_compile_features(json_udt_tests PRIVATE cxx_std_17)
+    target_link_libraries(json_udt_tests PRIVATE
+        GTest::gtest_main ${CSOUNDLIB_STATIC})
+    add_dependencies(unittests json_udt_tests)
+    gtest_discover_tests(json_udt_tests
+        PROPERTIES LABELS "json-udt")
 
-add_executable(testEngine engine_test.c)
-target_link_libraries(testEngine ${CSOUNDLIB} ${CUNIT_LIBRARY} pthread)
-add_test(NAME testEngine
-        COMMAND $<TARGET_FILE:testEngine> ${CMAKE_SOURCE_DIR}/tests/c/
-	-arg2 ${TEST_ARGS})
-
-add_executable(testServer server_test.cpp)
-target_link_libraries(testServer ${CSOUNDLIB} ${CUNIT_LIBRARY} pthread
-libcsnd6)
-add_test(NAME testServer
-        COMMAND $<TARGET_FILE:testServer> ${CMAKE_SOURCE_DIR}/tests/c/ -arg2 ${TEST_ARGS})
-
-
-endif(BUILD_TESTS)
-
-
-
-
+    set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/server_test_locks.cmake")
+    message(STATUS "Building unit tests")
+else()
+    message(STATUS "Not building unit tests")
+endif()

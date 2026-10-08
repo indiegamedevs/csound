@@ -18,38 +18,62 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
+
+#pragma once
 
 typedef struct {
         OPDS   h;
-        MYFLT  *which, *when, *dur;
-        MYFLT  *argums[VARGMAX-3];
-        int    midi;
+        cs_float  *which, *when, *dur;
+        cs_float  *argums[VARGMAX-3];
+        int32_t midi;
         INSDS  *kicked;
 } SCHED;
 
+
 typedef struct {
         OPDS   h;
-        MYFLT  *trigger;
-        MYFLT  *which, *when, *dur;
-        MYFLT  *argums[VARGMAX-3];
-        int    todo;
-        MYFLT  abs_when;
-        int    midi;
+        cs_float  *argums[VARGMAX];
+} SCHEDO;
+
+
+
+typedef struct {
+        OPDS   h;
+        cs_float  *trigger;
+        cs_float  *which, *when, *dur;
+        cs_float  *argums[VARGMAX-3];
+        int32_t    todo;
+        cs_float  abs_when;
+        int32_t    midi;
         INSDS  *kicked;
 } WSCHED;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *res;
-        MYFLT   *kamp, *xcps, *type;
+        cs_float   *res;
+        cs_float   *kamp, *xcps, *type;
         AUXCH   auxd;
-        MYFLT   *sine;
-        int     lasttype;
-        int32    phs;
+        cs_float   *sine;
+        int32_t lasttype;
+        cs_double  phs;
 } LFO;
+
+
+typedef struct {
+    OPDS   h;
+    STRINGDAT *opcod;
+    cs_float  *args[VARGMAX];
+    int32_t argno;
+} LINEVENT;
+
+typedef struct {
+    OPDS   h;
+    INSTANCEREF *inst;
+    cs_float  *args[VARGMAX];
+    int32_t argno;
+} LINEVENT2;
 
 /*****************************************************************/
 /* triginstr - Start instrument events at k-rate from orchestra. */
@@ -58,9 +82,9 @@ typedef struct {
 
 typedef struct {
         OPDS   h;
-        MYFLT  *trigger, *mintime, *maxinst;
-        MYFLT  *args[PMAX+1];
-        MYFLT  prvmintim;
+        cs_float  *trigger, *mintime, *maxinst;
+        cs_float  *args[PMAX+1];
+        cs_float  prvmintim;
         int32   timrem, prvktim, kadjust;
 } TRIGINSTR;
 
@@ -71,20 +95,34 @@ typedef struct {
 
 typedef struct {
   OPDS  h;
-  MYFLT *ktrig, *kstart, *kloop, *initndx, *kfn, *outargs[VARGMAX];
+  cs_float *ktrig, *kstart, *kloop, *initndx, *kfn, *outargs[VARGMAX];
   int32  ndx;
-  int   nargs, done;
-  int32  pfn;
-  MYFLT *table;
+  int32_t   nargs, done;
+  uint32_t groups;
+  cs_float pfn;
+  cs_float *table;
 } TRIGSEQ;
 
 typedef struct {
   OPDS  h;
-  MYFLT *ktrig, *unit_time, *kstart, *kloop, *initndx, *kfn;
+  cs_float *ktrig, *unit_time, *kstart, *kloop, *initndx, *kfn;
   int32 ndx;
-  int   done;
-  double start, newtime;
+  int32_t   done;
+  cs_double start, newtime;
   int32 pfn;
-  MYFLT *table;
+  cs_float *table;
 } SEQTIM;
+
+
+int32_t insert_score_args_at_sample(CSOUND *csound, const EVTBLK *ep,
+                                    cs_float *pfields[VARGMAX],
+                                    int64_t time_ofs);
+int32_t event_opcode_init(CSOUND *csound, LINEVENT *p, int32_t cnt, int32_t s, char p1);
+int32_t event_opcode_perf(CSOUND *csound, LINEVENT *p, int32_t cnt, int32_t s, char p1);
+
+typedef struct {
+  OPDS h;
+  cs_float *arg[PMAX];
+} RMEVT;
+
 

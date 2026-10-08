@@ -17,16 +17,17 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef CSOUND_STDOPCOD_H
 #define CSOUND_STDOPCOD_H
 
-//#include "csdl.h"
+#ifdef BUILD_PLUGINS
+#include "csdl.h"
+#else
 #include "csoundCore.h"
-#include <sndfile.h>
+#endif
 
 
 #include "interlocks.h"
@@ -34,16 +35,16 @@
 /* file structure for fout opcodes */
 
 struct fileinTag {
-    SNDFILE     *file;        /* Used in audio cases */
+    void     *file;        /* Used in audio cases */
     FILE        *raw;         /* Only used if text file */
     void        *fd;          /* file handle returned by CSOUND::FileOpen */
     char        *name;        /* short name */
     int32_t         do_scale;     /* non-zero if 0dBFS scaling should be applied */
+    int32_t         nchnls;       /* sound-file channels, including reused handles */
     uint32      refCount;   /* reference count, | 0x80000000 if close reqd */
 };
 
 typedef struct VCO2_TABLE_ARRAY_  VCO2_TABLE_ARRAY;
-typedef struct _atsbufread        ATSBUFREAD;
 
 typedef struct STDOPCOD_GLOBALS_ {
     CSOUND      *csound;
@@ -51,8 +52,8 @@ typedef struct STDOPCOD_GLOBALS_ {
     struct fileinTag  *file_opened;
     int32_t         file_max;
     int32_t         file_num;
-    int32        fout_kreset;
-   /* MYFLT       *buf;
+    int64_t        fout_kreset;
+   /* cs_float       *buf;
       int32_t         buf_size; */ /* VL - now using per instance buffer */
     /* oscbnk.c */
     uint32      oscbnk_seed;
@@ -61,17 +62,8 @@ typedef struct STDOPCOD_GLOBALS_ {
     int32_t         vco2_nr_table_arrays;
     VCO2_TABLE_ARRAY  **vco2_tables;
     /* ugnorman.c */
-    ATSBUFREAD  *atsbufreadaddr;
     int32_t         swapped_warning;
-    /* locsig.c */
-    void        *locsigaddr;
-    /* space.c */
-    void        *spaceaddr;
-    /* gab/gab.c */
-    MYFLT       *tb_ptrs[16];       /* Left here while the rest is implemented */
-    MYFLT       *tb[16];       /* gab: updated */
-    int32_t         tb_ixmode[16]; /* gab: added */
-    int32       tb_size[16];   /* gab: added */
+  //OPARMS  oparms;
 } STDOPCOD_GLOBALS;
 
 extern int32_t ambicode_init_(CSOUND *);
@@ -95,8 +87,6 @@ extern int32_t grain_init_(CSOUND *);
 extern int32_t locsig_init_(CSOUND *);
 extern int32_t lowpassr_init_(CSOUND *);
 extern int32_t metro_init_(CSOUND *);
-extern int32_t midiops2_init_(CSOUND *);
-extern int32_t midiops3_init_(CSOUND *);
 extern int32_t newfils_init_(CSOUND *);
 extern int32_t nlfilt_init_(CSOUND *);
 extern int32_t oscbnk_init_(CSOUND *);
@@ -120,7 +110,7 @@ extern int32_t
 wave_terrain_init_(CSOUND *);
 extern int32_t
 wter2_init_(CSOUND *);
+extern int32_t dbap_init_(CSOUND *);
 
 
 #endif  /* CSOUND_STDOPCOD_H */
-

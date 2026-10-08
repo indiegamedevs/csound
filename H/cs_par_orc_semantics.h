@@ -17,13 +17,13 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef __CSOUND_ORC_SEMANTIC_ANALYSIS_H__
 #define __CSOUND_ORC_SEMANTIC_ANALYSIS_H__
 
+#ifdef PARCS
 /*
  * This module maintains a list of instruments that have been parsed
  * When parsing an instrument:
@@ -88,5 +88,5 @@ struct instr_semantics_t
 void csp_orc_sa_interlocks(CSOUND *, ORCTOKEN *);
 
 void csp_orc_analyze_tree(CSOUND *, TREE*);
-
+#endif
 #endif /* end of include guard: __CSOUND_ORC_SEMANTIC_ANALYSIS_H__ */

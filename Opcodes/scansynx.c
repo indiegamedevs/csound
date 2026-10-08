@@ -45,14 +45,12 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /* Code fixes by John ffitch, March 2000 */
 /*               Made interpolation selectable April 2000 */
 
-#include "csdl.h"
 #include "scansyn.h"
 #include <math.h>
 #include "cwindow.h"
@@ -75,7 +73,7 @@
 static int32_t scsnux_initw(CSOUND *csound, PSCSNUX *p)
 {
     uint32_t len = p->len;
-    FUNC *fi = csound->FTnp2Find(csound, p->i_init);
+    FUNC *fi = csound->FTFind(csound, p->i_init);
     if (UNLIKELY(fi == NULL)) {
       return csound->InitError(csound, "%s",
                                Str("scanux: Could not find ifnnit ftable"));
@@ -87,7 +85,7 @@ static int32_t scsnux_initw(CSOUND *csound, PSCSNUX *p)
       memcpy is 20 times faster that loop!!
     */
     p->fi = fi;
-    len *= sizeof(MYFLT);
+    len *= sizeof(cs_float);
     memcpy(p->x0, fi->ftable, len);
     memcpy(p->x1, fi->ftable, len);
     memcpy(p->x2, fi->ftable, len);
@@ -97,12 +95,12 @@ static int32_t scsnux_initw(CSOUND *csound, PSCSNUX *p)
 /*
  *      Hammer hit
  */
-static int32_t scsnux_hammer(CSOUND *csound, PSCSNUX *p, MYFLT pos, MYFLT sgn)
+static int32_t scsnux_hammer(CSOUND *csound, PSCSNUX *p, cs_float pos, cs_float sgn)
 {
     int32_t i, i1, i2;
     FUNC *fi;
-    MYFLT *f;
-    MYFLT tab = FABS(*p->i_init);
+    cs_float *f;
+    cs_float tab = FABS(*p->i_init);
     int32 len  = p->len;
 
     if (pos<FL(0.0)) pos = FL(0.0);
@@ -112,7 +110,7 @@ static int32_t scsnux_hammer(CSOUND *csound, PSCSNUX *p, MYFLT pos, MYFLT sgn)
     //if (UNLIKELY(tab<FL(0.0))) tab = -tab;   /* JPff fix here */
     fi = p->fi;
     if (p->fi == NULL)
-      if (UNLIKELY((fi = csound->FTnp2Find(csound, &tab)) == NULL)) {
+      if (UNLIKELY((fi = csound->FTFind(csound, &tab)) == NULL)) {
         return csound->InitError(csound, "%s",
                                  Str("scanux: Could not find ifninit ftable"));
     }
@@ -224,7 +222,7 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
     uint32_t i;
 
     /* Mass */
-    if (UNLIKELY((f = csound->FTnp2Find(csound, p->i_m)) == NULL)) {
+    if (UNLIKELY((f = csound->FTFind(csound, p->i_m)) == NULL)) {
       return csound->InitError(csound,
                                "%s", Str("scanux: Could not find ifnmass table"));
     }
@@ -232,7 +230,7 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
     p->m = f->ftable;
 
     /* Centering */
-    if (UNLIKELY((f = csound->FTnp2Find(csound, p->i_c)) == NULL)) {
+    if (UNLIKELY((f = csound->FTFind(csound, p->i_c)) == NULL)) {
       return csound->InitError(csound, "%s",
                                Str("scanux: Could not find ifncentr table"));
     }
@@ -243,7 +241,7 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
     p->c = f->ftable;
 
     /* Damping */
-    if (UNLIKELY((f = csound->FTnp2Find(csound, p->i_d)) == NULL)) {
+    if (UNLIKELY((f = csound->FTFind(csound, p->i_d)) == NULL)) {
       return csound->InitError(csound,
                                "%s", Str("scanux: Could not find ifndamp table"));
     }
@@ -258,7 +256,7 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
       uint32_t j, ilen;
 
       /* Get the table */
-      if (UNLIKELY((f = csound->FTnp2Find(csound, p->i_f)) == NULL)) {
+      if (UNLIKELY((f = csound->FTFind(csound, p->i_f)) == NULL)) {
         return csound->InitError(csound, "%s",
                                  Str("scanux: Could not find ifnstiff table"));
       }
@@ -303,7 +301,7 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
       strncpy(filnam, ((STRINGDAT *) p->i_f)->data, 255); filnam[255]='\0';
       /* readfile if reqd */
       if (UNLIKELY((mfp =
-                    csound->ldmemfile2withCB(csound, filnam,
+                    csound->LoadMemoryFile(csound, filnam,
                                        CSFTYPE_XSCANU_MATRIX, NULL)) == NULL)) {
         return csound->InitError(csound,  Str("SCANU cannot load %s"), filnam);
       }
@@ -362,11 +360,11 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
 
 /* Make buffers to hold data */
 #if PHASE_INTERP == 3
-    csound->AuxAlloc(csound, 6*len*sizeof(MYFLT), &p->aux_x);
+    csound->AuxAlloc(csound, 6*len*sizeof(cs_float), &p->aux_x);
 #else
-    csound->AuxAlloc(csound, 5*len*sizeof(MYFLT), &p->aux_x);
+    csound->AuxAlloc(csound, 5*len*sizeof(cs_float), &p->aux_x);
 #endif
-    p->x0  = (MYFLT*)p->aux_x.auxp;
+    p->x0  = (cs_float*)p->aux_x.auxp;
     p->x1  = p->x0 + len;
     p->x2  = p->x1 + len;
     p->ext = p->x2 + len;
@@ -383,9 +381,9 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
 /* #endif */
 /*     } */
 /* #if PHASE_INTERP == 3 */
-/*     memset(p->x0, 0, 6*len*sizeof(MYFLT)); */
+/*     memset(p->x0, 0, 6*len*sizeof(cs_float)); */
 /* #else */
-/*     memset(p->x0, 0, 5*len*sizeof(MYFLT)); */
+/*     memset(p->x0, 0, 5*len*sizeof(cs_float)); */
 /* #endif */
 
     /* ... according to scheme */
@@ -405,7 +403,7 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
 
     /* Velocity gets presidential treatment */
     {
-      FUNC *f = csound->FTnp2Find(csound, p->i_v);
+      FUNC *f = csound->FTFind(csound, p->i_v);
       if (UNLIKELY(f == NULL)) {
         return csound->InitError(csound, "%s",
                                  Str("scanux: Could not find ifnvel table"));
@@ -419,7 +417,7 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
         p->v[i] = f->ftable[i];
     }
     /* Cache update rate over to local structure */
-    p->rate = (int32_t)(*p->i_rate * csound->GetSr(csound));
+    p->rate = (int32_t)(*p->i_rate * CS_ESR);
 
       /* Initialize index */
     p->idx  = 0;
@@ -430,7 +428,7 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
     /* Setup display window */
     if (*p->i_disp) {
       p->win = csound->Calloc(csound, sizeof(WINDAT));
-      csound->dispset(csound, (WINDAT*) p->win, p->x1, len,
+      csound->SetDisplay(csound, (WINDAT*) p->win, p->x1, len,
                       Str("Mass displacement"), 0, Str("Scansynth window"));
     }
 
@@ -439,8 +437,8 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
 
     /* Make external force window if we haven't so far */
     if (pp->ewinx == NULL) {
-      MYFLT arg =  PI_F/(MYFLT)(len-1);
-      pp->ewinx = (MYFLT*) csound->Malloc(csound, len * sizeof(MYFLT));
+      cs_float arg =  PI_F/(cs_float)(len-1);
+      pp->ewinx = (cs_float*) csound->Malloc(csound, len * sizeof(cs_float));
       for (i = 0 ; i != len-1 ; i++)
         pp->ewinx[i] = SQRT(SIN(arg*i));
       pp->ewinx[i] = FL(0.0); /* You get NaN otherwise */
@@ -449,9 +447,11 @@ static int32_t scsnux_init_(CSOUND *csound, PSCSNUX *p, int32_t istring)
     /* Throw data into list or use table */
     p->id = (int32_t) *p->i_id;
     if (p->id < 0) {
-      if (UNLIKELY(csound->GetTable(csound, &(p->out), -(p->id)) < (int32_t)len)) {
+      FUNC *ftp = csound->FTFind(csound, p->i_id);
+      if (UNLIKELY(ftp == NULL)) {
         return csound->InitError(csound, "%s", Str("xscanu: invalid id table"));
       }
+      p->out = ftp->ftable;
     }
     else {
       listadd(pp, p);
@@ -484,21 +484,21 @@ static int32_t scsnux(CSOUND *csound, PSCSNUX *p)
     int32    exti = p->exti;
     int32    idx = p->idx;
     int32_t  rate = p->rate;
-    MYFLT   *out = p->out;
-    MYFLT   *x0 = p->x0;
-    MYFLT   *x1 = p->x1;
-    MYFLT   *x2 = p->x2;
+    cs_float   *out = p->out;
+    cs_float   *x0 = p->x0;
+    cs_float   *x1 = p->x1;
+    cs_float   *x2 = p->x2;
 #if PHASE_INTERP == 3
-    MYFLT   *x3 = p->x3;
+    cs_float   *x3 = p->x3;
 #endif
-    MYFLT    *v = p->v;
+    cs_float    *v = p->v;
     pp = p->pp;
     if (UNLIKELY(pp == NULL)) goto err1;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (n = offset ; n < nsmps ; n++) {
 
@@ -511,7 +511,7 @@ static int32_t scsnux(CSOUND *csound, PSCSNUX *p)
       if (idx >= rate) {
         int32_t i, j, cnt = 0;      /* cnt is i*len+j */
         for (i = 0 ; i != len ; i++) {
-          MYFLT a = FL(0.0);
+          cs_float a = FL(0.0);
                                 /* Throw in audio drive */
           v[i] += p->ext[exti++] * pp->ewinx[i];
           if (UNLIKELY(exti >= len)) exti = 0L;
@@ -549,11 +549,11 @@ static int32_t scsnux(CSOUND *csound, PSCSNUX *p)
         /* Reset index and display the state */
         idx = 0;
         if (*p->i_disp)
-          csound->display(csound, p->win);
+          csound->Display(csound, p->win);
       }
       if (p->id<0) { /* Write to ftable */
         uint32_t i;
-        MYFLT t  = (MYFLT)idx / rate;
+        cs_float t  = (cs_float)idx / rate;
         for (i = 0 ; i != p->len ; i++) {
 #if PHASE_INTERP == 3
           out[i] = x1[i] +
@@ -604,7 +604,7 @@ static int32_t scsnsx_init(CSOUND *csound, PSCSNSX *p)
     {
       int32_t i;
       int32_t oscil_interp = (int32_t)*p->interp;
-      FUNC *t = csound->FTnp2Find(csound, p->i_trj);
+      FUNC *t = csound->FTFind(csound, p->i_trj);
       if (UNLIKELY(t == NULL)) {
         return csound->InitError(csound, "%s", Str("scans: Could not find "
                                              "the ifntraj table"));
@@ -634,7 +634,7 @@ static int32_t scsnsx_init(CSOUND *csound, PSCSNSX *p)
     /* Reset oscillator phase */
     p->phs = FL(0.0);
     /* Oscillator ratio */
-    p->fix = (MYFLT)p->tlen*(1.0/csound->GetSr(csound));
+    p->fix = (cs_float)p->tlen*(1.0/CS_ESR);
     return OK;
 }
 
@@ -644,26 +644,26 @@ static int32_t scsnsx_init(CSOUND *csound, PSCSNSX *p)
 static int32_t scsnsx(CSOUND *csound, PSCSNSX *p)
 {
     IGN(csound);
-    MYFLT   *out = p->a_out;
+    cs_float   *out = p->a_out;
     uint32_t offset = p->h.insdshead->ksmps_offset;
     uint32_t early  = p->h.insdshead->ksmps_no_end;
     uint32_t i, nsmps = CS_KSMPS;
     int32 tlen   = p->tlen;
-    MYFLT phs   = p->phs, inc = *p->k_freq * p->fix;
-    MYFLT t = (MYFLT)p->p->idx/p->p->rate;
-    MYFLT amp = *p->k_amp;
+    cs_float phs   = p->phs, inc = *p->k_freq * p->fix;
+    cs_float t = (cs_float)p->p->idx/p->p->rate;
+    cs_float amp = *p->k_amp;
     PSCSNUX *pp = p->p;
 
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     switch (p->oscil_interp) {
     case 1:
       for (i = offset ; i < nsmps ; i++) {
       /* Do various interpolations to get output sample ... */
-/*      MYFLT x     = phs - (int32_t)phs; */
+/*      cs_float x     = phs - (int32_t)phs; */
         int32_t ph = (int32_t)phs;
         out[i] = amp * (PINTERP(ph, t));
                 /* Update oscillator phase and wrap around if needed */
@@ -676,9 +676,9 @@ static int32_t scsnsx(CSOUND *csound, PSCSNSX *p)
       for (i = offset ; i < nsmps ; i++) {
       /* Do various interpolations to get output sample ... */
         int32_t  ph = (int32_t)phs;
-        MYFLT x     = phs - ph;
-        MYFLT y1    = PINTERP(ph  , t);
-        MYFLT y2    = PINTERP(ph+1, t);
+        cs_float x     = phs - ph;
+        cs_float y1    = PINTERP(ph  , t);
+        cs_float y2    = PINTERP(ph+1, t);
         out[i] = amp * (y1 + x*(y2 - y1));
                 /* Update oscillator phase and wrap around if needed */
         phs += inc;
@@ -690,10 +690,10 @@ static int32_t scsnsx(CSOUND *csound, PSCSNSX *p)
       for (i = offset ; i < nsmps ; i++) {
       /* Do various interpolations to get output sample ... */
         int32_t  ph = (int32_t)phs;
-        MYFLT x     = phs - ph;
-        MYFLT y1    = PINTERP(ph-1, t);
-        MYFLT y2    = PINTERP(ph  , t);
-        MYFLT y3    = PINTERP(ph+1, t);
+        cs_float x     = phs - ph;
+        cs_float y1    = PINTERP(ph-1, t);
+        cs_float y2    = PINTERP(ph  , t);
+        cs_float y3    = PINTERP(ph+1, t);
         out[i] = amp *
           (y2 + x*(-y1*FL(0.5) + x*(y1*FL(0.5) - y2 + y3*FL(0.5)) + y3*FL(0.5)));
                 /* Update oscillator phase and wrap around if needed */
@@ -706,11 +706,11 @@ static int32_t scsnsx(CSOUND *csound, PSCSNSX *p)
       for (i = offset ; i < nsmps ; i++) {
       /* Do various interpolations to get output sample ... */
         int32_t  ph = (int32_t)phs;
-        MYFLT x     = phs - ph;
-        MYFLT y1    = PINTERP(ph-1, t);
-        MYFLT y2    = PINTERP(ph  , t);
-        MYFLT y3    = PINTERP(ph+1, t);
-        MYFLT y4    = PINTERP(ph+2, t);
+        cs_float x     = phs - ph;
+        cs_float y1    = PINTERP(ph-1, t);
+        cs_float y2    = PINTERP(ph  , t);
+        cs_float y3    = PINTERP(ph+1, t);
+        cs_float y4    = PINTERP(ph+2, t);
         out[i] = amp *
           (y2 + x*(-y1/FL(3.0) - y2*FL(0.5) + y3 +
                    x*(y1*FL(0.5) - y2 + y3*FL(0.5) +
@@ -757,15 +757,19 @@ static int32_t scsnsmapx(CSOUND *csound, PSCSNMAPX *p)
 
 static OENTRY localops[] =
   {
-   { "xscanu", S(PSCSNUX),_QQ|TR, 3, "", "iiiiSiikkkkiikkaii", (SUBR)scsnux_init_S,
+   CSOUND_DEPRECATED_OPCODE("xscanu", "scanu", LEGACY, "Review matrix layout and scan setup when migrating; not a drop-in rename.")
+   { "xscanu", S(PSCSNUX),_QQ|TR, "", "iiiiSiikkkkiikkaii", (SUBR)scsnux_init_S,
      (SUBR)scsnux },
-   { "xscanu", S(PSCSNUX),_QQ|TR, 3, "", "iiiiiiikkkkiikkaii", (SUBR)scsnux_init,
+   { "xscanu", S(PSCSNUX),_QQ|TR, "", "iiiiiiikkkkiikkaii", (SUBR)scsnux_init,
      (SUBR)scsnux },
-   { "xscans", S(PSCSNSX),  _QQ|TR, 3,  "a", "kkiio",         (SUBR)scsnsx_init,
+   CSOUND_DEPRECATED_OPCODE("xscans", "scans", LEGACY, "Review matrix layout and scan setup when migrating; not a drop-in rename.")
+   { "xscans", S(PSCSNSX),  _QQ|TR,  "a", "kkiio",         (SUBR)scsnsx_init,
      (SUBR)scsnsx},
-   { "xscanmap", S(PSCSNMAPX),_QQ|TR, 3, "kk", "ikko",        (SUBR)scsnmapx_init,
+   CSOUND_DEPRECATED_OPCODE("xscanmap", "scanmap", LEGACY, "Review matrix layout and scan setup when migrating; not a drop-in rename.")
+   { "xscanmap", S(PSCSNMAPX),_QQ|TR, "kk", "ikko",        (SUBR)scsnmapx_init,
      (SUBR)scsnmapx,NULL },
-   { "xscansmap", S(PSCSNMAPX),_QQ|TR, 3,"",   "kkikko",      (SUBR)scsnmapx_init,
+   CSOUND_DEPRECATED_OPCODE("xscansmap", "scansmap", LEGACY, "Review matrix layout and scan setup when migrating; not a drop-in rename.")
+   { "xscansmap", S(PSCSNMAPX),_QQ|TR,"",   "kkikko",      (SUBR)scsnmapx_init,
      (SUBR)scsnsmapx,NULL }
 };
 

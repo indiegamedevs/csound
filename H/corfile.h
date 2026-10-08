@@ -17,12 +17,10 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #ifndef __corfil
-
 #define __corfil
 
 CORFIL *corfile_create_w(CSOUND*);
@@ -35,7 +33,7 @@ int32_t corfile_getc(CORFIL *f);
 void corfile_ungetc(CORFIL *f);
 char *corfile_fgets(char *b, int32_t len, CORFIL *f);
 #define corfile_ungetc(f)  (--f->p)
-MYFLT corfile_get_flt(CORFIL *f);
+cs_float corfile_get_flt(CORFIL *f);
 void corfile_reset(CORFIL *f);
 #define corfile_reset(f) (f->body[f->p=0]='\0')
 void corfile_rewind(CORFIL *f);
@@ -55,4 +53,6 @@ void corfile_set(CORFIL *f, int32_t n);
 void corfile_seek(CORFIL *f, int32_t n, int32_t dir);
 void corfile_preputs(CSOUND *csound, const char *s, CORFIL *f);
 void add_corfile(CSOUND* csound, CORFIL *smpf, char *filename);
+CORFIL *copy_string_to_corefile(CSOUND *csound, const char *string,
+                                int32_t fromScore);
 #endif

@@ -17,28 +17,27 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"                               /*    TWARP.C  */
 
 typedef struct {
-    MYFLT   betbas;
-    MYFLT   durslp;
-    MYFLT   durbas;
-    MYFLT   timbas;
+    cs_float   betbas;
+    cs_float   durslp;
+    cs_float   durbas;
+    cs_float   timbas;
 } TSEG;
 
-int     realtset(CSOUND *, SRTBLK *);
-MYFLT   realt(CSOUND *, MYFLT);
+int32_t     realtset(CSOUND *, SRTBLK *);
+cs_float   realt(CSOUND *, cs_float);
 
 void twarp(CSOUND *csound) /* time-warp a score section acc to T-statement */
 {
     SRTBLK  *bp;
-    MYFLT   absp3;
-    MYFLT   endtime;
-    int     negp3;
+    cs_float   absp3;
+    cs_float   endtime;
+    int32_t     negp3;
 
     if (UNLIKELY((bp = csound->frstbp) == NULL))      /* if null file,         */
       return;
@@ -90,11 +89,11 @@ void twarp(CSOUND *csound) /* time-warp a score section acc to T-statement */
     } while ((bp = bp->nxtblk) != NULL);
 }
 
-int realtset(CSOUND *csound, SRTBLK *bp)
+int32_t realtset(CSOUND *csound, SRTBLK *bp)
 {
     char    *p;
     char    c;
-    MYFLT   tempo, betspan, durbas, avgdur, stof(CSOUND *, char *);
+    cs_float   tempo, betspan, durbas, avgdur, stof(CSOUND *, char *);
     TSEG    *tp, *prvtp;
     TSEG    *tseg = (TSEG*)csound->tseg;
 
@@ -154,10 +153,10 @@ int realtset(CSOUND *csound, SRTBLK *bp)
     return(0);
 }
 
-MYFLT realt(CSOUND *csound, MYFLT srctim)
+cs_float realt(CSOUND *csound, cs_float srctim)
 {
     TSEG *tp;
-    MYFLT diff;
+    cs_float diff;
 
     tp = (TSEG*) csound->tpsave;
     while (srctim >= (tp+1)->betbas)

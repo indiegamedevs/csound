@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"                         /*      winascii.c           */
@@ -46,20 +45,20 @@ void KillAscii(CSOUND *csound, WINDAT *wdptr)
 
 static CS_NOINLINE void DrawAscii_(CSOUND *csound, WINDAT *wdptr, char *points)
 {
-    long    npts    = wdptr->npts;
-    MYFLT   absmax  = wdptr->absmax;
+  long    npts    = wdptr->npts, incr;
+    cs_float   absmax  = wdptr->absmax;
     char    *s;
-    MYFLT   *fp = wdptr->fdata, *fplim = fp + npts;
-    int     n, vscale4, vpos, vmin = VER, vmax = 0, incr;
-    MYFLT   scalefactor;
+    cs_float   *fp = wdptr->fdata, *fplim = fp + npts;
+    int32_t     n, vscale4, vpos, vmin = VER, vmax = 0;
+    cs_float   scalefactor;
 
     scalefactor = YOFF4 / absmax;                   /*   get normalizing */
     incr = (npts-1)/HOR + 1;                        /*   & sampling facs */
     for (s = points + (YOFF * HOR), n = 0; fp < fplim; n++, fp += incr) {
       s[n] = '_';                                   /* now write x-axis  */
-      vscale4 = (int) (*fp * scalefactor + YOFF4);
+      vscale4 = (int32_t) (*fp * scalefactor + YOFF4);
       vpos = vscale4 >> 2;  /* and sampled pnts (with 1/4 line resolution) */
-      if ((unsigned int) vpos > (unsigned int) VER)
+      if ((uint32_t) vpos > (uint32_t) VER)
         continue;
       if (vpos < vmin)  vmin = vpos;
       if (vpos > vmax)  vmax = vpos;

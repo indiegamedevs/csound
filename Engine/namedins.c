@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"
@@ -29,7 +28,7 @@
 /* check if the string s is a valid instrument or opcode name */
 /* return value is zero if the string is not a valid name */
 
-int check_instr_name(char *s)
+int32_t check_instr_name(char *s)
 {
     char    *c = s;
 
@@ -42,11 +41,11 @@ int check_instr_name(char *s)
 }
 
 
-MYFLT  named_instr_find_in_engine(CSOUND *csound, char *s,
+cs_float  named_instr_find_in_engine(CSOUND *csound, char *s,
                                   ENGINE_STATE *engineState) {
 
   INSTRNAME     *inm;
-    int ss = (*s=='-'?1:0);
+    int32_t ss = (*s=='-'?1:0);
     char *tt;
     if (!engineState->instrumentNames)
       return 0L;                              /* no named instruments defined */
@@ -57,8 +56,8 @@ MYFLT  named_instr_find_in_engine(CSOUND *csound, char *s,
     }
     else {                     /* tagged instrument */
       char buff[256];
-      int len = tt-s-ss;
-      MYFLT frac;
+      int32_t len = (int32_t) (tt-s-ss);
+      cs_float frac;
       strncpy(buff,s+ss, len);
       buff[len] = '\0';
       inm = cs_hash_table_get(csound, engineState->instrumentNames, buff);
@@ -70,7 +69,7 @@ MYFLT  named_instr_find_in_engine(CSOUND *csound, char *s,
 /* find the instrument number for the specified name */
 /* return value is zero if none was found */
 
-MYFLT named_instr_find(CSOUND *csound, char *s)
+cs_float named_instr_find(CSOUND *csound, char *s)
 {
   return named_instr_find_in_engine(csound, s, &csound->engineState);
 }
@@ -79,7 +78,7 @@ MYFLT named_instr_find(CSOUND *csound, char *s)
 /* convert opcode string argument to instrument number */
 /* return value is -1 if the instrument cannot be found */
 /* (in such cases, csoundInitError() is also called) */
-int32 strarg2insno(CSOUND *csound, void *p, int is_string)
+int32 csoundStringArg2Insno(CSOUND *csound, void *p, int32_t is_string)
 {
     int32    insno;
 
@@ -90,10 +89,10 @@ int32 strarg2insno(CSOUND *csound, void *p, int is_string)
       }
     }
     else {      /* numbered instrument */
-      insno = (int32) *((MYFLT*) p);
+      insno = (int32) *((cs_float*) p);
       if (UNLIKELY(insno < 1 || insno > csound->engineState.maxinsno ||
                    !csound->engineState.instrtxtp[insno])) {
-        csound->Warning(csound, Str("Cannot Find Instrument %d"), (int) insno);
+        csound->Warning(csound, Str("Cannot Find Instrument %d"), (int32_t) insno);
         return csound->engineState.maxinsno;
       }
     }
@@ -103,7 +102,7 @@ int32 strarg2insno(CSOUND *csound, void *p, int is_string)
 /* same as strarg2insno, but runs at perf time, */
 /* and does not support numbered instruments */
 /* (used by opcodes like event or schedkwhen) */
-int32 strarg2insno_p(CSOUND *csound, char *s)
+int32 csoundStringArg2Insno_p(CSOUND *csound, char *s)
 {
     int32    insno;
 
@@ -119,7 +118,7 @@ int32 strarg2insno_p(CSOUND *csound, char *s)
 /* argument is non-zero, only opcode names are searched */
 /* return value is -1 if the instrument cannot be found */
 /* (in such cases, csoundInitError() is also called) */
-int32 strarg2opcno(CSOUND *csound, void *p, int is_string, int force_opcode)
+int32 string_arg_to_opcno(CSOUND *csound, void *p, int32_t is_string, int32_t force_opcode)
 {
     int32    insno = 0;
 
@@ -128,10 +127,10 @@ int32 strarg2opcno(CSOUND *csound, void *p, int is_string, int force_opcode)
         insno = named_instr_find(csound, (char*) p);
       }
       else {      /* numbered instrument */
-        insno = (int32) *((MYFLT*) p);
+        insno = (int32) *((cs_float*) p);
         if (UNLIKELY(insno < 1 || insno > csound->engineState.maxinsno ||
                      !csound->engineState.instrtxtp[insno])) {
-          csound->InitError(csound, Str("Cannot Find Instrument %d"), (int) insno);
+          csound->InitError(csound, Str("Cannot Find Instrument %d"), (int32_t) insno);
           return NOT_AN_INSTRUMENT;
         }
       }
@@ -149,26 +148,26 @@ int32 strarg2opcno(CSOUND *csound, void *p, int is_string, int force_opcode)
     return insno;
 }
 
-/* create file name from opcode argument (string or MYFLT)      */
+/* create file name from opcode argument (string or cs_float)      */
 /*   CSOUND *csound:                                            */
 /*      pointer to Csound instance                              */
 /*   char *s:                                                   */
 /*      output buffer, should have enough space; if NULL, the   */
 /*      required amount of memory is allocated and returned     */
 /*   void *p:                                                   */
-/*      opcode argument, is interpreted as char* or MYFLT*,     */
+/*      opcode argument, is interpreted as char* or cs_float*,     */
 /*      depending on the 'is_string' parameter                  */
 /*   const char *baseName:                                      */
-/*      name prefix to be used if the 'p' argument is MYFLT,    */
+/*      name prefix to be used if the 'p' argument is cs_float,    */
 /*      and it is neither SSTRCOD, nor a valid index to strset  */
 /*      space.                                                  */
 /*      For example, if "soundin." is passed as baseName, file  */
 /*      names in the format "soundin.%d" will be generated.     */
 /*      baseName may be an empty string, but should not be NULL */
-/*   int is_string:                                             */
+/*   int32_t is_string:                                             */
 /*      if non-zero, 'p' is interpreted as a char* pointer and  */
 /*      is used as the file name. Otherwise, it is expected to  */
-/*      point to a MYFLT value, and the following are tried:    */
+/*      point to a cs_float value, and the following are tried:    */
 /*        1. if the value is SSTRCOD, the string argument of    */
 /*           the current score event is used (string p-field)   */
 /*        2. if the value, rounded to the nearest integer, is a */
@@ -184,8 +183,8 @@ int32 strarg2opcno(CSOUND *csound, void *p, int is_string, int force_opcode)
 /*      freeing the allocated memory with csound->Free() or     */
 /*      csound->Free()                                          */
 
-char *strarg2name(CSOUND *csound, char *s, void *p, const char *baseName,
-                                  int is_string)
+char *csoundStringArg2Name(CSOUND *csound, char *s, void *p, const char *baseName,
+                                  int32_t is_string)
 {
     if (is_string) {
       /* opcode string argument */
@@ -193,11 +192,11 @@ char *strarg2name(CSOUND *csound, char *s, void *p, const char *baseName,
         s = csound->Malloc(csound, strlen((char*) p) + 1);
       strcpy(s, (char*) p);
     }
-    else if (csound->ISSTRCOD(*((MYFLT*) p))) {
+    else if (IsStringCode(*((cs_float*) p))) {
       /* p-field string, unquote and copy */
-      char  *s2 = get_arg_string(csound, *((MYFLT*)p));
-      int   i = 0;
-      //printf("strarg2name: %g %s\n", *((MYFLT*)p), s2);
+      char  *s2 = csoundGetArgString(csound, *((cs_float*)p));
+      int32_t   i = 0;
+      //printf("strarg2name: %g %s\n", *((cs_float*)p), s2);
       if (s == NULL)
         s = csound->Malloc(csound, strlen(s2) + 1);
       if (*s2 == '"')
@@ -207,33 +206,35 @@ char *strarg2name(CSOUND *csound, char *s, void *p, const char *baseName,
       s[i] = '\0';
     }
     else {
-      int   i = (int) ((double) *((MYFLT*) p)
-                       + (*((MYFLT*) p) >= FL(0.0) ? 0.5 : -0.5));
-      if (i >= 0 && i <= (int) csound->strsmax &&
+      int32_t   i = (int32_t) ((cs_double) *((cs_float*) p)
+                       + (*((cs_float*) p) >= FL(0.0) ? 0.5 : -0.5));
+      if (i >= 0 && i <= (int32_t) csound->strsmax &&
           csound->strsets != NULL && csound->strsets[i] != NULL) {
         if (s == NULL)
           s = csound->Malloc(csound, strlen(csound->strsets[i]) + 1);
         strcpy(s, csound->strsets[i]);
       }
       else {
-        int n;
+        int32_t n;
         if (s == NULL) {
-          /* allocate +20 characters, assuming sizeof(int) <= 8 */
-          s = csound->Malloc(csound, n = strlen(baseName) + 21);
+          /* allocate +20 characters, assuming sizeof(int32_t) <= 8 */
+          s = csound->Malloc(csound, n = (int32_t) strlen(baseName) + 21);
           snprintf(s, n, "%s%d", baseName, i);
         }
-        else sprintf(s, "%s%d", baseName, i); /* dubious */
+        else 
+          /* need enough memory as per requirements set above */
+          snprintf(s, strlen(baseName) + 21,
+                      "%s%d", baseName, i); 
       }
     }
     return s;
 }
 
-/* ----------------------------------------------------------------------- */
-/* the following functions are for efficient management of the opcode list */
-
-
-
-
+/* API function for instrument numbers
+ */
+int32 csoundGetInstrNumber(CSOUND *csound, const char *str) {
+  return csoundStringArg2Insno(csound, (void *) str, 1);
+}
 
 /* -------- IV - Jan 29 2005 -------- */
 
@@ -246,7 +247,7 @@ char *strarg2name(CSOUND *csound, char *s, void *p, const char *baseName,
  * parameters (zero nbytes, invalid or already used name), or
  * CSOUND_MEMORY if there is not enough memory.
  */
-PUBLIC int csoundCreateGlobalVariable(CSOUND *csound,
+int32_t csoundCreateGlobalVariable(CSOUND *csound,
                                       const char *name, size_t nbytes)
 {
     void* p;
@@ -279,7 +280,7 @@ PUBLIC int csoundCreateGlobalVariable(CSOUND *csound,
  * Get pointer to space allocated with the name "name".
  * Returns NULL if the specified name is not defined.
  */
-PUBLIC void *csoundQueryGlobalVariable(CSOUND *csound, const char *name)
+void *csoundQueryGlobalVariable(CSOUND *csound, const char *name)
 {
     /* check if there is an actual database to search */
     if (csound->namedGlobals == NULL) return NULL;
@@ -297,7 +298,7 @@ PUBLIC void *csoundQueryGlobalVariable(CSOUND *csound, const char *name)
  * Faster, but may crash or return an invalid pointer if 'name' is
  * not defined.
  */
-PUBLIC void *csoundQueryGlobalVariableNoCheck(CSOUND *csound, const char *name)
+void *csoundQueryGlobalVariableNoCheck(CSOUND *csound, const char *name)
 {
     return cs_hash_table_get(csound, csound->namedGlobals, (char*) name);
 }
@@ -307,7 +308,7 @@ PUBLIC void *csoundQueryGlobalVariableNoCheck(CSOUND *csound, const char *name)
  * Return value is CSOUND_SUCCESS on success, or CSOUND_ERROR if the name is
  * not defined.
  */
-PUBLIC int csoundDestroyGlobalVariable(CSOUND *csound, const char *name)
+int32_t csoundDestroyGlobalVariable(CSOUND *csound, const char *name)
 {
     void *p = cs_hash_table_get(csound, csound->namedGlobals, (char*)name);
     if (UNLIKELY(p == NULL))

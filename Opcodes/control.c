@@ -17,13 +17,10 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
-#include "csdl.h"
 #include "control.h"
-
 #include <sys/time.h>
 #include <sys/types.h>
 #include <signal.h>
@@ -177,7 +174,7 @@ static void readvalues(CONTROL_GLOBALS *p)
 
 static int32_t cntrl_set(CSOUND *csound, CNTRL *p)
 {
-    ensure_slider(get_globals(csound, &(p->p)), (int32_t) MYFLT2LONG(*p->kcntl));
+    ensure_slider(get_globals(csound, &(p->p)), (int32_t) CS_FLOAT2LONG(*p->kcntl));
     return OK;
 }
 
@@ -185,7 +182,7 @@ static int32_t control(CSOUND *csound, CNTRL *p)
 {
     CONTROL_GLOBALS *pp = get_globals(csound, &(p->p));
     readvalues(pp);
-    *p->kdest = pp->values[(int32_t)MYFLT2LONG(*p->kcntl)];
+    *p->kdest = pp->values[(int32_t)CS_FLOAT2LONG(*p->kcntl)];
     return OK;
 }
 
@@ -193,7 +190,7 @@ static int32_t ocontrol_(CSOUND *csound, SCNTRL *p, int32_t istring)
 {
     CONTROL_GLOBALS *pp = get_globals(csound, &(p->p));
     int32_t c = (int32_t) *p->which;
-    int32_t slider = (int32_t) MYFLT2LONG(*p->kcntl);
+    int32_t slider = (int32_t) CS_FLOAT2LONG(*p->kcntl);
 
 /*  csound->Message(csound, "ocontrol: %d %d %f\n", slider, c, *p->val); */
     ensure_slider(pp, slider);
@@ -218,11 +215,11 @@ static int32_t ocontrol_(CSOUND *csound, SCNTRL *p, int32_t istring)
       {
         char buffer[100];
         if (istring) {
-          csound->strarg2name(csound, buffer,
+          csound->StringArg2Name(csound, buffer,
                               ((STRINGDAT *)p->val)->data, "Control ",istring);
         }
         else
-         csound->strarg2name(csound, buffer, p->val, "Control ",istring);
+         csound->StringArg2Name(csound, buffer, p->val, "Control ",istring);
         csound->Message(csound, Str("Slider %d set to %s\n"), slider, buffer);
         fprintf(pp->wish_cmd, "setlab %d \"%s\"\n", slider, buffer);
         break;
@@ -244,7 +241,7 @@ static int32_t ocontrol_S(CSOUND *csound, SCNTRL *p){
 static int32_t button_set(CSOUND *csound, CNTRL *p)
 {
     CONTROL_GLOBALS *pp = get_globals(csound, &(p->p));
-    int32_t n = (int32_t) MYFLT2LONG(*p->kcntl);
+    int32_t n = (int32_t) CS_FLOAT2LONG(*p->kcntl);
 
     if (pp->wish_pid == 0)
       start_tcl_tk(pp);
@@ -262,7 +259,7 @@ static int32_t button_set(CSOUND *csound, CNTRL *p)
 static int32_t button(CSOUND *csound, CNTRL *p)
 {
     CONTROL_GLOBALS *pp = get_globals(csound, &(p->p));
-    int32_t t = (int32_t)MYFLT2LONG(*p->kcntl);
+    int32_t t = (int32_t)CS_FLOAT2LONG(*p->kcntl);
     readvalues(pp);
     *p->kdest = pp->buttons[t];
     pp->buttons[t] = 0;
@@ -272,7 +269,7 @@ static int32_t button(CSOUND *csound, CNTRL *p)
 static int32_t check_set(CSOUND *csound, CNTRL *p)
 {
     CONTROL_GLOBALS *pp = get_globals(csound, &(p->p));
-    int32_t n = (int32_t) MYFLT2LONG(*p->kcntl);
+    int32_t n = (int32_t) CS_FLOAT2LONG(*p->kcntl);
 
     if (pp->wish_pid == 0)
       start_tcl_tk(pp);
@@ -291,7 +288,7 @@ static int32_t check(CSOUND *csound, CNTRL *p)
 {
     CONTROL_GLOBALS *pp = get_globals(csound, &(p->p));
     readvalues(pp);
-    *p->kdest = pp->checks[(int32_t) MYFLT2LONG(*p->kcntl)];
+    *p->kdest = pp->checks[(int32_t) CS_FLOAT2LONG(*p->kcntl)];
     return OK;
 }
 
@@ -300,18 +297,18 @@ static int32_t check(CSOUND *csound, CNTRL *p)
 static int32_t textflash_(CSOUND *csound, TXTWIN *p, int32_t istring)
 {
     CONTROL_GLOBALS *pp = get_globals(csound, &(p->p));
-    int32_t   wind = (int32_t) MYFLT2LONG(*p->kcntl);
+    int32_t   wind = (int32_t) CS_FLOAT2LONG(*p->kcntl);
     char  buffer[100];
 
     if (pp->wish_pid == 0)
       start_tcl_tk(pp);
     if (istring) {
-      csound->strarg2name(csound, buffer, ((STRINGDAT *)p->val)->data, "", istring);
+      csound->StringArg2Name(csound, buffer, ((STRINGDAT *)p->val)->data, "", istring);
       fprintf(pp->wish_cmd, "settext %d \"%s\"\n", wind, buffer);
     }
-    else if (csound->ISSTRCOD(*p->val)) {
-      csound->strarg2name(csound, buffer,
-                          csound->GetString(csound, *p->val), "", 1);
+    else if (IsStringCode(*p->val)) {
+      csound->StringArg2Name(csound, buffer,
+                          csound->GetArgString(csound, *p->val), "", 1);
     }
     else {
       fprintf(pp->wish_cmd, "deltext %d\n", wind);
@@ -332,13 +329,13 @@ textflash_S(CSOUND *csound, TXTWIN *p){
 #define S(x)    sizeof(x)
 
 static OENTRY control_localops[] = {
-  { "control",  S(CNTRL), 0, 3, "k", "k", (SUBR) cntrl_set, (SUBR) control, NULL },
-{ "setctrl",  S(SCNTRL), 0, 1, "",  "iii", (SUBR) ocontrol, NULL, NULL           },
-{ "setctrl.S",  S(SCNTRL), 0, 1, "",  "iSi", (SUBR) ocontrol_S, NULL, NULL       },
-{ "button",   S(CNTRL),  0, 3, "k", "k",  (SUBR) button_set, (SUBR) button, NULL },
-{ "checkbox", S(CNTRL),  0, 3, "k", "k",   (SUBR) check_set, (SUBR) check, NULL  },
-{ "flashtxt", S(TXTWIN), 0, 1, "",  "ii",  (SUBR) textflash, NULL, NULL          },
-{ "flashtxt.S", S(TXTWIN), 0, 1, "",  "iS",  (SUBR) textflash_S, NULL, NULL      },
+  { "control",  S(CNTRL), 0,  "k", "k", (SUBR) cntrl_set, (SUBR) control, NULL },
+{ "setctrl",  S(SCNTRL), 0,  "",  "iii", (SUBR) ocontrol, NULL, NULL           },
+{ "setctrl.S",  S(SCNTRL), 0,  "",  "iSi", (SUBR) ocontrol_S, NULL, NULL       },
+{ "button",   S(CNTRL),  0,  "k", "k",  (SUBR) button_set, (SUBR) button, NULL },
+{ "checkbox", S(CNTRL),  0,  "k", "k",   (SUBR) check_set, (SUBR) check, NULL  },
+{ "flashtxt", S(TXTWIN), 0,  "",  "ii",  (SUBR) textflash, NULL, NULL          },
+{ "flashtxt.S", S(TXTWIN), 0,  "",  "iS",  (SUBR) textflash_S, NULL, NULL      },
 };
 
 LINKAGE_BUILTIN(control_localops)

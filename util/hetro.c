@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "std_util.h"                                   /*  HETRO.C   */
@@ -58,8 +57,8 @@ static int32_t is_sdiffile(char *name);
 /* lowest heterodyne freq = sr/bufsiz */
 
 typedef struct {
-  MYFLT    x1,x2,yA,y2,y3;      /* lpf coefficients*/
-  MYFLT    cur_est,             /* current freq. est.*/
+  cs_float    x1,x2,yA,y2,y3;      /* lpf coefficients*/
+  cs_float    cur_est,             /* current freq. est.*/
            freq_est, max_frq, max_amp,/* harm freq. est. & max vals found */
            fund_est,            /* fundamental est.*/
            t,                   /* fundamental period est.*/
@@ -70,7 +69,7 @@ typedef struct {
                                 /* begin time & sample input duration*/
            **MAGS, **FREQS;     /* magnitude and freq. output buffers*/
 
-  double *cos_mul, *sin_mul,    /* quad. term buffers*/
+  cs_double *cos_mul, *sin_mul,    /* quad. term buffers*/
          *a_term, *b_term,      /*real & imag. terms*/
          *r_ampl,               /* pt. by pt. amplitude buffer*/
          *r_phase,              /* pt. by pt. phase buffer*/
@@ -92,22 +91,22 @@ typedef struct {
          bufmask;               /* set to bufsiz - 1   */
   char   *infilnam,             /* input file name */
          *outfilnam;            /* output file name */
-  MYFLT  *auxp;                 /* pointer to input file */
-  MYFLT  *adp;                  /* pointer to front of sample file */
-  double *c_p,*s_p;             /* pointers to space for sine and cos terms */
+  cs_float  *auxp;                 /* pointer to input file */
+  cs_float  *adp;                  /* pointer to front of sample file */
+  cs_double *c_p,*s_p;             /* pointers to space for sine and cos terms */
   int32_t newformat;             /* flag for m/c independent format */
 } HET;
 
 #if INCSDIF
 static int32_t writesdif(CSOUND*, HET*);
 #endif
-static  double  GETVAL(HET *, double *, int32);
+static  cs_double  GETVAL(HET *, cs_double *, int32);
 //static  double  sq(double);
-static  void    PUTVAL(HET *,double *, int32, double);
+static  void    PUTVAL(HET *,cs_double *, int32, cs_double);
 static  int32_t hetdyn(CSOUND *csound, HET *, int32_t);
 static  void    lpinit(HET*);
-static  void    lowpass(HET *,double *, double *, int32);
-static  void    average(HET *,int32, double *, double *, int32);
+static  void    lowpass(HET *,cs_double *, cs_double *, int32);
+static  void    average(HET *,int32, cs_double *, cs_double *, int32);
 static  void    output(HET *,int32, int32_t, int32_t);
 static  void    output_ph(HET *, int32);
 static  int32_t filedump(HET *, CSOUND *);
@@ -145,7 +144,7 @@ static int32_t hetro(CSOUND *csound, int32_t argc, char **argv)
     int32_t i, hno, channel = 1, retval = 0;
     int32   nsamps, smpspc, bufspc, mgfrspc;
     char    *dsp, *dspace;
-    double  *begbufs, *endbufs;
+    cs_double  *begbufs, *endbufs;
     HET     het;
     HET     *t = &het;
     SOUNDIN *p;         /* space allocated by SAsndgetset() */
@@ -163,42 +162,42 @@ static int32_t hetro(CSOUND *csound, int32_t argc, char **argv)
         case 's':
           FIND(Str("no sampling rate"))
 #if defined(USE_DOUBLE)
-          csound->sscanf(s,"%lf",&t->sr);
+          csound->Sscanf(s,"%" CS_DOUBLE_SCAN,&t->sr);
 #else
-          csound->sscanf(s,"%f",&t->sr);
+          csound->Sscanf(s,"%f",&t->sr);
 #endif
           break;
         case 'c':
           FIND(Str("no channel"))
-          sscanf(s,"%d",&channel);
+          csound->Sscanf(s,"%d",&channel);
           break;
         case 'b':
           FIND(Str("no begin time"))
 #if defined(USE_DOUBLE)
-          csound->sscanf(s,"%lf",&t->beg_time);
+          csound->Sscanf(s,"%" CS_DOUBLE_SCAN,&t->beg_time);
 #else
-          csound->sscanf(s,"%f",&t->beg_time);
+          csound->Sscanf(s,"%f",&t->beg_time);
 #endif
           break;
         case 'd':
           FIND(Str("no duration time"))
 #if defined(USE_DOUBLE)
-          csound->sscanf(s,"%lf",&t->input_dur);
+          csound->Sscanf(s,"%" CS_DOUBLE_SCAN,&t->input_dur);
 #else
-          csound->sscanf(s,"%f",&t->input_dur);
+          csound->Sscanf(s,"%f",&t->input_dur);
 #endif
           break;
         case 'f':
           FIND(Str("no fundamental estimate"))
 #if defined(USE_DOUBLE)
-          csound->sscanf(s,"%lf",&t->fund_est);
+          csound->Sscanf(s,"%" CS_DOUBLE_SCAN,&t->fund_est);
 #else
-          csound->sscanf(s,"%f",&t->fund_est);
+          csound->Sscanf(s,"%f",&t->fund_est);
 #endif
           break;
         case 'h':
           FIND(Str("no harmonic count"))
-          sscanf(s,"%hd",&t->hmax);
+          csound->Sscanf(s,"%hd",&t->hmax);
           if (UNLIKELY(t->hmax > HMAX))
             csound->Message(csound, Str("over %d harmonics but continuing"),
                             HMAX);
@@ -210,22 +209,22 @@ static int32_t hetro(CSOUND *csound, int32_t argc, char **argv)
           break;
         case 'M':
           FIND(Str("no amplitude maximum"))
-          csound->sscanf(s,"%lf",&t->m_ampsum);
+          csound->Sscanf(s,"%" CS_DOUBLE_SCAN,&t->m_ampsum);
           break;
         case 'm':
           FIND(Str("no amplitude minimum"))
-          sscanf(s,"%d",&t->amp_min);
+          csound->Sscanf(s,"%d",&t->amp_min);
           break;
         case 'n':
           FIND(Str("no number of output points"))
-          sscanf(s,"%d",&t->num_pts);
+          csound->Sscanf(s,"%d",&t->num_pts);
           break;
         case 'l':
           FIND(Str("no filter cutoff"))
 #if defined(USE_DOUBLE)
-          csound->sscanf(s,"%lf",&t->freq_c);
+          csound->Sscanf(s,"%" CS_DOUBLE_SCAN,&t->freq_c);
 #else
-          csound->sscanf(s,"%f",&t->freq_c);
+          csound->Sscanf(s,"%f",&t->freq_c);
 #endif
           break;
         case 'X':
@@ -256,26 +255,26 @@ static int32_t hetro(CSOUND *csound, int32_t argc, char **argv)
     if (UNLIKELY((t->input_dur < 0) || (t->beg_time < 0)))
       return quit(csound,Str("input and begin times cannot be less than zero"));
     /* open sndfil, do skiptime */
-    if (UNLIKELY((infd = csound->SAsndgetset(csound, t->infilnam, &p,
+    if (UNLIKELY((infd = (csound->GetUtility(csound))->SndinGetSetSA(csound, t->infilnam, &p,
                                     &t->beg_time, &t->input_dur,
                                              &t->sr, channel)) == NULL)) {
       char errmsg[256];
       snprintf(errmsg, 256, Str("Cannot open %s"), t->infilnam);
       return quit(csound, errmsg);
     }
-    nsamps = p->getframes;
-    /* alloc for MYFLTs */
-    t->auxp = (MYFLT*) csound->Malloc(csound, nsamps * sizeof(MYFLT));
+    nsamps = (int32_t) p->getframes;
+    /* alloc for cs_float values */
+    t->auxp = (cs_float*) csound->Malloc(csound, nsamps * sizeof(cs_float));
     /* & read them in */
     if (UNLIKELY((t->smpsin =
-                  csound->getsndin(csound, infd,
+                  (csound->GetUtility(csound))->Sndin(csound, infd,
                                    t->auxp, nsamps, p)) <= 0)) {
       char errmsg[256];
       csound->Message(csound, "smpsin = %"PRId64"\n", (int64_t) t->smpsin);
       snprintf(errmsg, 256, Str("Read error on %s\n"), t->infilnam);
       return quit(csound, errmsg);
     }
-    t->sr = (MYFLT) p->sr;                /* sr now from open  */
+    t->sr = (cs_float) p->sr;                /* sr now from open  */
     /* samps in fund prd */
     t->windsiz = (int32)(t->sr / t->fund_est /*+ FL(0.5)*/);
     //printf("widsize = %d\n", t->windsiz);
@@ -292,7 +291,7 @@ static int32_t hetro(CSOUND *csound, int32_t argc, char **argv)
         return quit(csound, Str("number of output points is too great"));
     t->delta_t = FL(1.0)/t->sr;
     t->t = FL(1.0)/t->fund_est;
-    t->outdelta_t = (MYFLT) t->num_pts
+    t->outdelta_t = (cs_float) t->num_pts
                           / (t->smpsin - t->windsiz);
     //printf("sizes: delta_t = %f t = %f outdelta = %f\n",
     //       t->delta_t, t->t, t->outdelta_t);
@@ -301,42 +300,42 @@ static int32_t hetro(CSOUND *csound, int32_t argc, char **argv)
     t->midbuf = t->bufsiz/2;
     t->bufmask = t->bufsiz - 1;
 
-    smpspc = t->smpsin * sizeof(double);
-    bufspc = t->bufsiz * sizeof(double);
+    smpspc = t->smpsin * sizeof(cs_double);
+    bufspc = t->bufsiz * sizeof(cs_double);
 //printf("sizes2: smpspc - %d  bufspc - %d\n", smpspc, bufspc);
     dsp = dspace = csound->Calloc(csound, smpspc * 2 + bufspc * 13);
-    t->c_p = (double *) dsp;      dsp += smpspc;  /* space for the    */
-    t->s_p = (double *) dsp;      dsp += smpspc;  /* quadrature terms */
-    begbufs = (double *) dsp;
-    t->cos_mul = (double *) dsp;  dsp += bufspc;  /* bufs that will be */
-    t->sin_mul = (double *) dsp;  dsp += bufspc;  /* refilled each hno */
-    t->a_term = (double *) dsp;   dsp += bufspc;
-    t->b_term = (double *) dsp;   dsp += bufspc;
-    t->r_ampl = (double *) dsp;   dsp += bufspc;
-    t->ph_av1 = (double *) dsp;   dsp += bufspc;
-    t->ph_av2 = (double *) dsp;   dsp += bufspc;
-    t->ph_av3 = (double *) dsp;   dsp += bufspc;
-    t->r_phase = (double *) dsp;  dsp += bufspc;
-    t->amp_av1 = (double *) dsp;  dsp += bufspc;
-    t->amp_av2 = (double *) dsp;  dsp += bufspc;
-    t->amp_av3 = (double *) dsp;  dsp += bufspc;
-    t->a_avg = (double *) dsp;    dsp += bufspc;
-    endbufs = (double *) dsp;
+    t->c_p = (cs_double *) dsp;      dsp += smpspc;  /* space for the    */
+    t->s_p = (cs_double *) dsp;      dsp += smpspc;  /* quadrature terms */
+    begbufs = (cs_double *) dsp;
+    t->cos_mul = (cs_double *) dsp;  dsp += bufspc;  /* bufs that will be */
+    t->sin_mul = (cs_double *) dsp;  dsp += bufspc;  /* refilled each hno */
+    t->a_term = (cs_double *) dsp;   dsp += bufspc;
+    t->b_term = (cs_double *) dsp;   dsp += bufspc;
+    t->r_ampl = (cs_double *) dsp;   dsp += bufspc;
+    t->ph_av1 = (cs_double *) dsp;   dsp += bufspc;
+    t->ph_av2 = (cs_double *) dsp;   dsp += bufspc;
+    t->ph_av3 = (cs_double *) dsp;   dsp += bufspc;
+    t->r_phase = (cs_double *) dsp;  dsp += bufspc;
+    t->amp_av1 = (cs_double *) dsp;  dsp += bufspc;
+    t->amp_av2 = (cs_double *) dsp;  dsp += bufspc;
+    t->amp_av3 = (cs_double *) dsp;  dsp += bufspc;
+    t->a_avg = (cs_double *) dsp;    dsp += bufspc;
+    endbufs = (cs_double *) dsp;
 
-    mgfrspc = t->num_pts * sizeof(MYFLT);
+    mgfrspc = t->num_pts * sizeof(cs_float);
     dsp = csound->Malloc(csound, mgfrspc * t->hmax * 2);
-    t->MAGS = (MYFLT **) csound->Malloc(csound,
-                                              t->hmax * sizeof(MYFLT*));
-    t->FREQS = (MYFLT **) csound->Malloc(csound,
-                                               t->hmax * sizeof(MYFLT*));
+    t->MAGS = (cs_float **) csound->Malloc(csound,
+                                              t->hmax * sizeof(cs_float*));
+    t->FREQS = (cs_float **) csound->Malloc(csound,
+                                               t->hmax * sizeof(cs_float*));
     for (i = 0; i < t->hmax; i++) {
-      t->MAGS[i] = (MYFLT *) dsp;    dsp += mgfrspc;
-      t->FREQS[i] = (MYFLT *) dsp;   dsp += mgfrspc;
+      t->MAGS[i] = (cs_float *) dsp;    dsp += mgfrspc;
+      t->FREQS[i] = (cs_float *) dsp;   dsp += mgfrspc;
     }
     lpinit(t);                        /* calculate LPF coeffs.  */
     t->adp = t->auxp;           /* point to beg sample data block */
     for (hno = 0; hno < t->hmax; hno++) { /* for requested harmonics */
-      double *dblp;
+      cs_double *dblp;
       t->freq_est += t->fund_est; /*   do analysis */
       t->cur_est = t->freq_est;
       dblp = begbufs;
@@ -350,8 +349,6 @@ static int32_t hetro(CSOUND *csound, int32_t argc, char **argv)
       csound->Message(csound,Str("analyzing harmonic #%d\n"),hno);
       csound->Message(csound,Str("freq estimate %6.1f,"), t->cur_est);
       if (hetdyn(csound, t, hno) != 0)  /* perform actual computation */
-        return -1;
-      if (!csound->CheckEvents(csound))
         return -1;
       csound->Message(csound, Str(" max found %6.1f, rel amp %6.1f\n"),
                               t->max_frq, t->max_amp);
@@ -372,13 +369,13 @@ static int32_t hetro(CSOUND *csound, int32_t argc, char **argv)
     return retval;
 }
 
-static double GETVAL(HET* t, double *inb, int32 smpl)
+static cs_double GETVAL(HET* t, cs_double *inb, int32 smpl)
 {                               /* get value at position smpl in array inb */
     if (smpl<0) return 0.0;
     return   inb[(smpl + t->midbuf) & t->bufmask];
 }
 
-static void PUTVAL(HET* t, double *outb, int32 smpl, double value)
+static void PUTVAL(HET* t, cs_double *outb, int32 smpl, cs_double value)
 {                               /* put value in array outb at postn smpl */
     outb[(smpl + t->midbuf) & t->bufmask] = value;
 }
@@ -387,11 +384,11 @@ static int32_t hetdyn(CSOUND *csound,
                       HET* t, int32_t hno) /* HETERODYNE FILTER */
 {
     int32   smplno;
-    double  temp_a, temp_b, tpidelest;
-    double  *cos_p, *sin_p;
+    cs_double  temp_a, temp_b, tpidelest;
+    cs_double  *cos_p, *sin_p;
     int32   n;
     int32_t outpnt, lastout = -1;
-    MYFLT   *ptr;
+    cs_float   *ptr;
 
     t->jmp_ph = 0;                     /* set initial phase to 0 */
     temp_a = temp_b = 0;
@@ -401,8 +398,8 @@ static int32_t hetdyn(CSOUND *csound,
     for (smplno = 0; smplno < t->smpsin; smplno++) {
       //double phase = smplno * tpidelest;     /* do all quadrature calcs */
       ptr = t->adp;           /* at once and point to it */
-      cos_p[smplno] = (double)(ptr[smplno] * cos(smplno * tpidelest));
-      sin_p[smplno] = (double)(ptr[smplno] * sin(smplno * tpidelest));
+      cos_p[smplno] = (cs_double)(ptr[smplno] * cos(smplno * tpidelest));
+      sin_p[smplno] = (cs_double)(ptr[smplno] * sin(smplno * tpidelest));
     }
 
     for (smplno = 0; smplno < t->smpsin - t->windsiz; smplno++) {
@@ -454,8 +451,6 @@ static int32_t hetdyn(CSOUND *csound,
         /* if next out-time */
         output(t, smplno, hno, outpnt);  /*     place in     */
         lastout = outpnt;                      /*     output array */
-        if (!csound->CheckEvents(csound))
-          return -1;
       }
       if (t->skip) {
         t->skip = 0;       /* quit if no more samples in file */
@@ -469,28 +464,28 @@ static int32_t hetdyn(CSOUND *csound,
 static void lpinit(HET *t) /* lowpass coefficient ititializer */
 {               /* 3rd order butterworth LPF coefficients calculated using */
                 /* impulse invariance */
-    MYFLT costerm,sinterm;
-    double omega_c;
+    cs_float costerm,sinterm;
+    cs_double omega_c;
 
     omega_c = t->freq_c*TWOPI;
-    costerm = (MYFLT)cos(SQRTOF3*omega_c*t->delta_t*0.5);
-    sinterm = (MYFLT)sin(SQRTOF3*omega_c*t->delta_t*0.5);
-    t->x1 = (MYFLT)(omega_c*t->delta_t*
+    costerm = (cs_float)cos(SQRTOF3*omega_c*t->delta_t*0.5);
+    sinterm = (cs_float)sin(SQRTOF3*omega_c*t->delta_t*0.5);
+    t->x1 = (cs_float)(omega_c*t->delta_t*
                           (exp(-omega_c*t->delta_t) +
                            exp(-omega_c*t->delta_t/2.0)
                            * (-costerm + sinterm/SQRTOF3)));
-    t->x2 = (MYFLT)(omega_c*t->delta_t*
+    t->x2 = (cs_float)(omega_c*t->delta_t*
                           (exp(-omega_c*t->delta_t) -
                            exp(-3*omega_c*t->delta_t/2)
                            * (costerm + sinterm/SQRTOF3)));
-    t->yA = (-((MYFLT)exp(-omega_c*t->delta_t) +
-            FL(2.0)*(MYFLT)exp(-omega_c*t->delta_t/2)*costerm));
-    t->y2 = FL(2.0) * (MYFLT)exp(-3.0*omega_c*t->delta_t/2.0)*costerm +
-            (MYFLT)exp(-omega_c*t->delta_t);
-    t->y3 = (-(MYFLT)exp(-2.0*omega_c*t->delta_t));
+    t->yA = (-((cs_float)exp(-omega_c*t->delta_t) +
+            FL(2.0)*(cs_float)exp(-omega_c*t->delta_t/2)*costerm));
+    t->y2 = FL(2.0) * (cs_float)exp(-3.0*omega_c*t->delta_t/2.0)*costerm +
+            (cs_float)exp(-omega_c*t->delta_t);
+    t->y3 = (-(cs_float)exp(-2.0*omega_c*t->delta_t));
 }
 
-static void lowpass(HET *t, double *out, double *in, int32 smpl)
+static void lowpass(HET *t, cs_double *out, cs_double *in, int32 smpl)
   /* call with x1,x2,yA,y2,y3 initialised  */
   /* calls LPF function */
 {
@@ -502,7 +497,7 @@ static void lowpass(HET *t, double *out, double *in, int32 smpl)
             t->y3 * GETVAL(t,out,smpl-3)));
 }
 
-static void average(HET *t, int32 window,double *in,double *out, int32 smpl)
+static void average(HET *t, int32 window,cs_double *in,cs_double *out, int32 smpl)
   /* AVERAGES OVER 'WINDOW' SAMPLES */
   /* this is actually a comb filter with 'Z' */
   /* transform of (1/w *[1 - Z**-w]/[1 - Z**-1]) */
@@ -513,15 +508,15 @@ static void average(HET *t, int32 window,double *in,double *out, int32 smpl)
     if (smpl<window) {
       //printf("inside window: %f %f\n", GETVAL(t,out,smpl-1), GETVAL(t,in,smpl));
       PUTVAL(t,out, smpl,
-             (double)(GETVAL(t,out,smpl-1) +
-                      (1.0/(double)window) * (GETVAL(t,in,smpl))));
+             (cs_double)(GETVAL(t,out,smpl-1) +
+                      (1.0/(cs_double)window) * (GETVAL(t,in,smpl))));
     }
     else {
       //printf("outside window: %f %f %f\n", GETVAL(t,out,smpl-1),
       //       GETVAL(t,in,smpl), GETVAL(t,in,smpl-window));
       PUTVAL(t,out, smpl,
-             (double)(GETVAL(t,out,smpl-1) +
-                      (1.0/(double)window) *
+             (cs_double)(GETVAL(t,out,smpl-1) +
+                      (1.0/(cs_double)window) *
                       (GETVAL(t,in,smpl) - GETVAL(t,in,smpl-window))));
     }
 }
@@ -532,8 +527,8 @@ static void output_ph(HET *t,int32 smpl)
                                 /* for each samples quadrature components, & */
                                 /* and unwraps the phase.  A phase difference*/
 {                               /* is taken to represent the freq. change.   */
-    double      delt_temp;      /* the pairs are then comb filtered.         */
-    double      temp_a;
+    cs_double      delt_temp;      /* the pairs are then comb filtered.         */
+    cs_double      temp_a;
 
     //printf("phase: %f %f\n", GETVAL(t, t->a_term,smpl), GETVAL(t,t->b_term,smpl));
     if ((temp_a=GETVAL(t,t->a_term,smpl)) == 0)
@@ -542,7 +537,7 @@ static void output_ph(HET *t,int32 smpl)
     else t->new_ph=
            -atan(GETVAL(t,t->b_term,smpl)/temp_a) - PI*u(-temp_a);
 
-    if (fabs((double)t->new_ph - t->old_ph)>PI)
+    if (fabs((cs_double)t->new_ph - t->old_ph)>PI)
       t->jmp_ph -= TWOPI*sgn(temp_a);
 
     //printf("output-ph: %f ->%f\n",t->old_ph, t->new_ph);
@@ -553,7 +548,7 @@ static void output_ph(HET *t,int32 smpl)
                  (TWOPI*t->delta_t));
     if ((t->freq_c <= 1) || (smpl < 3)) {
       PUTVAL(t,t->amp_av1,smpl,
-             (MYFLT)hypot(GETVAL(t,t->a_term,smpl),
+             (cs_float)hypot(GETVAL(t,t->a_term,smpl),
                           GETVAL(t,t->b_term,smpl)));
       average(t, t->windsiz,t->amp_av1,t->amp_av2,smpl);
       average(t, t->windsiz,t->amp_av2,t->amp_av3,smpl);
@@ -566,7 +561,7 @@ static void output_ph(HET *t,int32 smpl)
     }
     else {
       PUTVAL(t,t->r_ampl,smpl,
-              (MYFLT)hypot(GETVAL(t,t->a_term,smpl),
+              (cs_float)hypot(GETVAL(t,t->a_term,smpl),
                            GETVAL(t,t->b_term,smpl)));
       PUTVAL(t,t->a_avg,smpl,delt_temp);
     }
@@ -578,15 +573,15 @@ static void output(HET *t, int32 smpl, int32_t hno, int32_t pnt)
                         /* when called, gets frequency change */
                         /* and adds it to current freq. stores*/
 {                       /* current amp and new freq in arrays */
-    double delt_freq;
-    MYFLT  new_amp, new_freq;
+    cs_double delt_freq;
+    cs_float  new_amp, new_freq;
 
     if (pnt < t->num_pts) {
       delt_freq = GETVAL(t,t->a_avg,smpl); /* 0.5 for rounding ? */
       t->FREQS[hno][pnt] =
-        new_freq = (MYFLT)(delt_freq + t->cur_est);
+        new_freq = (cs_float)(delt_freq + t->cur_est);
       t->MAGS[hno][pnt] =
-        new_amp = (MYFLT)GETVAL(t, t->r_ampl,smpl);
+        new_amp = (cs_float)GETVAL(t, t->r_ampl,smpl);
       if (new_freq > t->max_frq)
         t->max_frq = new_freq;
       //printf("** new_amp %f; max_amp = %f\n", new_amp, t->max_amp);
@@ -597,9 +592,31 @@ static void output(HET *t, int32 smpl, int32_t hno, int32_t pnt)
     }
 }
 
+static const char *hetro_usage_txt[] = {
+  Str_noop("Usage: hetro [options...] inputSoundfile outputfile"),
+  Str_noop("Options:"),
+  Str_noop("    -s <samplerate>"),
+  Str_noop("    -c <channel>"),
+  Str_noop("    -b <beginTime>"),
+  Str_noop("    -d <duration>"),
+  Str_noop("    -f <fundamental estimate"),
+  Str_noop("    -h <harmonic count>"),
+  Str_noop("    -M <maximum amplitide>"),
+  Str_noop("    -m <minimum amplitide>"),
+  Str_noop("    -n <number of output points>"),
+  Str_noop("    -l <filter cutoff>"),
+  Str_noop("    -X <newformat>"),
+  Str_noop("    -x <oldformat>"),
+  Str_noop("    -- <log file>"),
+    NULL
+};
+
 static int32_t quit(CSOUND *csound, char *msg)
 {
+    int32_t i;
     csound->ErrorMsg(csound, Str("hetro:  %s\n\tanalysis aborted"), msg);
+    for (i = 0; hetro_usage_txt[i] != NULL; i++)
+      csound->Message(csound, "%s\n", Str(hetro_usage_txt[i]));
     return -1;
 }
 
@@ -610,12 +627,12 @@ static int32_t quit(CSOUND *csound, char *msg)
 static int32_t filedump(HET *t, CSOUND *csound)
 {
     int32_t h, pnt, ofd, nbytes;
-    double  scale,x,y;
+    cs_double  scale,x,y;
     int16   **mags, **freqs, *magout, *frqout;
-    double  ampsum, maxampsum = 0.0;
+    cs_double  ampsum, maxampsum = 0.0;
     int32   lenfil = 0;
     int16   *TIME;
-    MYFLT   timesiz;
+    cs_float   timesiz;
     FILE    *ff;
 
     mags  = (int16 **) csound->Malloc(csound, t->hmax * sizeof(int16*));
@@ -634,11 +651,11 @@ static int32_t filedump(HET *t, CSOUND *csound)
 
     /* fullpath else cur dir */
     if (t->newformat) {
-      if (UNLIKELY(csound->FileOpen2(csound, &ff, CSFILE_STD, t->outfilnam,
+      if (UNLIKELY(csound->FileOpen(csound, &ff, CSFILE_STD, t->outfilnam,
                                      "w", "", CSFTYPE_HETROT, 0) == NULL))
       return quit(csound, Str("cannot create output file\n"));
     } else
-      if (UNLIKELY(csound->FileOpen2(csound, &ofd, CSFILE_FD_W, t->outfilnam,
+      if (UNLIKELY(csound->FileOpen(csound, &ofd, CSFILE_FD_W, t->outfilnam,
                                      NULL, "", CSFTYPE_HETRO, 0) == NULL))
         return quit(csound, Str("cannot create output file\n"));
 
@@ -677,7 +694,7 @@ static int32_t filedump(HET *t, CSOUND *csound)
     for (h = 0; h < t->hmax; h++) {
       int16 *mp = magout, *fp = frqout;
       int16 *lastmag, *lastfrq, pkamp = 0;
-      int32_t mpoints, fpoints, contig = 0;
+      int32_t mpoints, fpoints;
       *mp++ = -1;                      /* set brkpoint type codes  */
       *fp++ = -2;
       lastmag = mp;
@@ -695,12 +712,12 @@ static int32_t filedump(HET *t, CSOUND *csound)
           if (contig > 2) {        /* if third time this value  */
             if ((mag == *(mp-1) && mag == *(mp-3))
                                    /*    or 2nd time this slope */
-                || ((MYFLT)(mag - *(mp-1)) / (tim - *(mp-2)) ==
-                    (MYFLT)(*(mp-1) - *(mp-3)) / (*(mp-2) - *(mp-4))))
+                || ((cs_float)(mag - *(mp-1)) / (tim - *(mp-2)) ==
+                    (cs_float)(*(mp-1) - *(mp-3)) / (*(mp-2) - *(mp-4))))
               mp -= 2;              /* overwrite the previous */
             if ((frq == *(fp-1) && frq == *(fp-3))
-                || ((MYFLT)(frq - *(fp-1)) / (tim - *(fp-2)) ==
-                    (MYFLT)(*(fp-1) - *(fp-3)) / (*(fp-2) - *(fp-4))))
+                || ((cs_float)(frq - *(fp-1)) / (tim - *(fp-2)) ==
+                    (cs_float)(*(fp-1) - *(fp-3)) / (*(fp-2) - *(fp-4))))
               fp -= 2;
           }
 #endif
@@ -710,7 +727,6 @@ static int32_t filedump(HET *t, CSOUND *csound)
           *fp++ = frq;
           lastmag = mp;         /* record last significant seg  */
           lastfrq = fp;
-          contig++;
         }
         else {
           if (mp > lastmag) {   /* for non-significant segments */
@@ -721,7 +737,6 @@ static int32_t filedump(HET *t, CSOUND *csound)
           *mp++ = 0;
           *fp++ = tim;
           *fp++ = frq;
-          contig = 0;
         }
       }
       if (lastmag < mp) {          /* if last signif not last point */
@@ -733,8 +748,8 @@ static int32_t filedump(HET *t, CSOUND *csound)
         *(fp-1) = *(fp-3);       /*   & zero the freq change      */
       *mp++ = END;                 /* add the sequence delimiters   */
       *fp++ = END;
-      mpoints = ((mp - magout) / 2) - 1;
-      nbytes = (mp - magout) * sizeof(int16);
+      mpoints = (int32_t) ((mp - magout) / 2) - 1;
+      nbytes = (int32_t)((mp - magout) * sizeof(int16));
       if (t->newformat) {
         int32_t i;
         for (i=0; i<(mp - magout); i++)
@@ -753,8 +768,8 @@ static int32_t filedump(HET *t, CSOUND *csound)
       }
 #endif
       lenfil += nbytes;
-      fpoints = ((fp - frqout) / 2) - 1;
-      nbytes = (fp - frqout) * sizeof(int16);
+      fpoints = (int32_t) ((fp - frqout) / 2) - 1;
+      nbytes = (int32_t)((fp - frqout) * sizeof(int16));
       if (t->newformat) {
         int32_t i;
         for (i=0; i<fp - frqout; i++)
@@ -801,9 +816,9 @@ static int32_t filedump(HET *t, CSOUND *csound)
 static int32_t writesdif(CSOUND *csound, HET *t)
 {
     int32_t     i,j,h, pnt;
-    double      scale;
-    double      ampsum, maxampsum = 0.0;
-    MYFLT       timesiz;
+    cs_double      scale;
+    cs_double      ampsum, maxampsum = 0.0;
+    cs_float       timesiz;
     SDIFresult  r;
     SDIF_FrameHeader head;
     SDIF_MatrixHeader mh;
@@ -826,11 +841,11 @@ static int32_t writesdif(CSOUND *csound, HET *t)
     scale = t->m_ampsum / maxampsum;
     /* SDIF does not specify a range, 'cos it's too clever for that sort
      * of thing, but this seems consistent with existing examples! */
-    scale *= (double) (1.0/csound->Get0dBFS(csound));
+    scale *= (cs_double) (1.0/csound->Get0dBFS(csound));
 
     for (h = 0; h < t->hmax; h++) {
       for (pnt = 0; pnt < t->num_pts; pnt++) {
-        t->MAGS[h][pnt] *= (MYFLT) scale;
+        t->MAGS[h][pnt] *= (cs_float) scale;
         /* skip code to force positive values, for now */
       }
     }
@@ -864,7 +879,7 @@ static int32_t writesdif(CSOUND *csound, HET *t)
     for (i=0; i < t->num_pts; i++) {
       sdif_float32 amp,freq,phase = 0.0f;
       /* cannot offer anything interesting with phase! */
-      head.time = (sdif_float32) ((MYFLT)i * timesiz);
+      head.time = (sdif_float32) ((cs_float)i * timesiz);
       if (UNLIKELY((r = SDIF_WriteFrameHeader(&head,sdiffile))!=ESDIF_SUCCESS)) {
         csound->Message(csound,"%s", Str("Error writing SDIF frame header.\n"));
         return 0;
@@ -920,9 +935,9 @@ static int32_t is_sdiffile(char *name)
 
 int32_t hetro_init_(CSOUND *csound)
 {
-    int32_t retval = csound->AddUtility(csound, "hetro", hetro);
+    int32_t retval = (csound->GetUtility(csound))->AddUtility(csound, "hetro", hetro);
     if (!retval) {
-      retval = csound->SetUtilityDescription(csound, "hetro",
+      retval = (csound->GetUtility(csound))->SetUtilityDescription(csound, "hetro",
                                              Str("Soundfile analysis for adsyn"));
     }
     return retval;

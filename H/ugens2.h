@@ -17,55 +17,71 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*                                                              UGENS2.H        */
 
+#pragma once
+
 typedef struct {
         OPDS    h;
-        MYFLT   *sr, *xcps, *iphs;
-        double  curphs;
+        cs_float   *sr, *xcps, *iphs;
+        cs_double  curphs;
 } PHSOR;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *sr,*aphs, *xcps, *kR, *iphs;
-        double  curphs;
-        double  b;
+        cs_float   *sr,*aphs, *xcps, *kR, *iphs;
+        cs_double  curphs;
+        cs_double  b;
 } EPHSOR;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *rslt, *xndx, *xfn, *ixmode, *ixoff, *iwrap;
-        MYFLT   offset;
+        cs_float   *rslt, *xndx, *xfn, *ixmode, *ixoff, *iwrap;
+        cs_float   offset;
         int32   pfn;
         int32   xbmul;
-        int     wrap;
+        int32_t     wrap;
         FUNC    *ftp;
 } TABLE;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *rslt, *idel, *kamp, *idur, *ifn;
+        cs_float   *rslt, *idel, *kamp, *idur, *ifn;
         int32   kinc, phs;
+        cs_double   fphs, inc;
         int32   dcnt;
         FUNC    *ftp;
 } OSCIL1;
 
 typedef struct  {
         OPDS    h;
-        MYFLT   *rslt, *kamp, *ifrq, *ifn, *itimes;
-        MYFLT   index, inc, maxndx;
-        int32   ntimes;
+        cs_float   *rslt, *kamp, *ifrq, *ifn, *itimes;
+        cs_double  phase, inc;
+        int32_t ntimes, cycles;
         FUNC    *ftp;
 } OSCILN;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *sr, *xamp, *xcps, *ifn, *iphs;
+        cs_float   *sr, *xamp, *xcps, *ifn, *iphs;
         int32   lphs;
+        cs_double   phs;
         FUNC    *ftp;
+        int32       tablen;
+        cs_double      tablenUPsr;
         FUNC    FF;
+        AUXCH   arraydata;
 } OSC;
+
+typedef struct  {
+    OPDS        h;
+    cs_float       *out, *amp, *freq, *kloop, *kend, *ift, *iphs;
+    FUNC        *ftp;
+    int32        tablen;
+    cs_float       fsr;
+    cs_double      phs, looplength;
+} LPOSC;
+

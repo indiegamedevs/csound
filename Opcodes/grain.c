@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*      Granular synthesizer designed and coded by Paris Smaragdis      */
@@ -30,41 +29,41 @@
 #include "stdopcod.h"
 #include "grain.h"
 
-static inline MYFLT Unirand(CSOUND *csound, MYFLT a)
+static inline cs_float Unirand(CSOUND *csound, cs_float a)
 {
-    MYFLT x;
-    x = (MYFLT) (csound->Rand31(&(csound->randSeed1)) - 1) / FL(2147483645.0);
+    cs_float x;
+    x = (cs_float) (csound->Rand31(csound->RandSeed31(csound)) - 1) / FL(2147483645.0);
     return (x * a);
 }
 
 static int32_t agsset(CSOUND *csound, PGRA *p)  /*      Granular U.G. set-up    */
 {
     FUNC        *gftp, *eftp;
-    int32        bufsize;
-    MYFLT       *d;
+    size_t        bufsize;
+    cs_float       *d;
 
-    if (LIKELY((gftp = csound->FTnp2Finde(csound, p->igfn)) != NULL))
+    if (LIKELY((gftp = csound->FTFind(csound, p->igfn)) != NULL))
       p->gftp = gftp;
     else return NOTOK;
 
-    if (LIKELY((eftp = csound->FTnp2Finde(csound, p->iefn)) != NULL))
+    if (LIKELY((eftp = csound->FTFind(csound, p->iefn)) != NULL))
       p->eftp = eftp;
     else return NOTOK;
 
     p->gcount = FL(1.0);
 
     if (*p->opt == 0)
-      p->pr = (MYFLT)(gftp->flen << gftp->lobits);
+      p->pr = (cs_float)(gftp->flen << gftp->lobits);
     else
       p->pr = FL(0.0);
 
-    bufsize = sizeof(MYFLT) * (2L * (size_t) (CS_ESR * *p->imkglen)
+    bufsize = sizeof(cs_float) * (2L * (size_t) (CS_ESR * *p->imkglen)
                                + (3L * CS_KSMPS));
 
     if (p->aux.auxp == NULL || (uint32_t)bufsize > p->aux.size)
       csound->AuxAlloc(csound, bufsize, &p->aux);
     else memset(p->aux.auxp, '\0', bufsize); /* Clear any old data */
-    d  = p->x = (MYFLT *)p->aux.auxp;
+    d  = p->x = (cs_float *)p->aux.auxp;
     d +=  (int32_t)(CS_ESR * *p->imkglen) + CS_KSMPS;
     p->y = d;
 
@@ -74,42 +73,42 @@ static int32_t agsset(CSOUND *csound, PGRA *p)  /*      Granular U.G. set-up    
     return OK;
 }
 
-static inline unsigned int ISPOW2(unsigned int x) {
+static inline uint32_t ISPOW2(uint32_t x) {
   return (x > 0) && !(x & (x - 1)) ? 1 : 0;
 }
 
 static int32_t ags(CSOUND *csound, PGRA *p) /*  Granular U.G. a-rate main routine */
 {
     FUNC        *gtp, *etp;
-    MYFLT       *buf, *out, *rem, *gtbl, *etbl;
-    MYFLT       *xdns, *xamp, *xlfr, *temp, amp;
+    cs_float       *buf, *out, *rem, *gtbl, *etbl;
+    cs_float       *xdns, *xamp, *xlfr, *temp, amp;
     int32       isc, isc2, inc, inc2, lb, lb2;
     int32       n, bufsize;
     int32       ekglen;
     uint32_t    offset = p->h.insdshead->ksmps_offset;
     uint32_t    early  = p->h.insdshead->ksmps_no_end;
     uint32_t    i, nsmps = CS_KSMPS;
-    MYFLT       kglen = *p->kglen;
-    MYFLT       gcount = p->gcount;
+    cs_float       kglen = *p->kglen;
+    cs_float       gcount = p->gcount;
     uint32_t elen, glen;
-    MYFLT gcvt, ecvt, einc;
-    int pow2tab;
+    cs_float gcvt, ecvt, einc;
+    int32_t pow2tab;
                                 /* Pick up common values to locals for speed */
     if (UNLIKELY(p->aux.auxp==NULL)) goto err1;
     if (UNLIKELY(kglen<=FL(0.0)))
       return csound->PerfError(csound, &(p->h),
-                               Str("grain: grain length zero"));
+                               "%s", Str("grain: grain length zero"));
     gtp  = p->gftp;
     gtbl = gtp->ftable;
     glen = gtp->flen;
-    gcvt = glen/csound->GetSr(csound);
+    gcvt = glen/CS_ESR;
 
     pow2tab = ISPOW2(glen);
 
     etp  = p->eftp;
     etbl = etp->ftable;
     elen = etp->flen;
-    ecvt = elen/csound->GetSr(csound);
+    ecvt = elen/CS_ESR;
 
     lb   = gtp->lobits;
     lb2  = etp->lobits;
@@ -122,18 +121,18 @@ static int32_t ags(CSOUND *csound, PGRA *p) /*  Granular U.G. a-rate main routin
     if (kglen > *p->imkglen) kglen = *p->imkglen;
 
     ekglen  = (int32)(CS_ESR * kglen);   /* Useful constant */
-    inc2    = (int32)(csound->sicvt / kglen); /* Constant for each cycle */
+    inc2    = (int32)(CS_SICVT / kglen); /* Constant for each cycle */
     einc =  (1./kglen) * ecvt;
     bufsize = CS_KSMPS + ekglen;
     xdns    = p->xdns;
     xamp    = p->xamp;
     xlfr    = p->xlfr;
 
-    memset(buf, '\0', bufsize*sizeof(MYFLT));
-    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(MYFLT));
+    memset(buf, '\0', bufsize*sizeof(cs_float));
+    if (UNLIKELY(offset)) memset(out, '\0', offset*sizeof(cs_float));
     if (UNLIKELY(early)) {
       nsmps -= early;
-      memset(&out[nsmps], '\0', early*sizeof(MYFLT));
+      memset(&out[nsmps], '\0', early*sizeof(cs_float));
     }
     for (i = offset ; i < nsmps ; i++) {
       if (gcount >= FL(1.0)) { /* I wonder..... */
@@ -146,7 +145,7 @@ static int32_t ags(CSOUND *csound, PGRA *p) /*  Granular U.G. a-rate main routin
         isc2 = 0;
         if(pow2tab) {
           /* VL 21/11/18 original code, fixed-point indexing */
-        inc = (int32) ((*xlfr + Unirand(csound, *p->kbnd)) * csound->sicvt);
+        inc = (int32) ((*xlfr + Unirand(csound, *p->kbnd)) * CS_SICVT);
         do {
           *temp++ += amp  * *(gtbl + (isc >> lb)) *
                      *(etbl + (isc2 >> lb2));
@@ -156,9 +155,9 @@ static int32_t ags(CSOUND *csound, PGRA *p) /*  Granular U.G. a-rate main routin
         }
         else {
           /* VL 21/11/18 new code, floating-point indexing */
-          MYFLT gph = (MYFLT) isc;
-          MYFLT eph = FL(0.0);
-          MYFLT ginc = (*xlfr + Unirand(csound, *p->kbnd)) * gcvt;
+          cs_float gph = (cs_float) isc;
+          cs_float eph = FL(0.0);
+          cs_float ginc = (*xlfr + Unirand(csound, *p->kbnd)) * gcvt;
         do {
           *temp++ += amp * gtbl[(int)gph] * etbl[(int)eph];
           gph += ginc;
@@ -172,7 +171,7 @@ static int32_t ags(CSOUND *csound, PGRA *p) /*  Granular U.G. a-rate main routin
         }
       }
       xdns += p->dnsadv;
-      gcount += *xdns * csound->onedsr;
+      gcount += *xdns * CS_ONEDSR;
       xamp += p->ampadv;
       xlfr += p->lfradv;
     }
@@ -184,19 +183,19 @@ static int32_t ags(CSOUND *csound, PGRA *p) /*  Granular U.G. a-rate main routin
       temp++;
     } while (--n);
 
-    memcpy(&out[offset], rem, (nsmps-offset)*sizeof(MYFLT));
+    memcpy(&out[offset], rem, (nsmps-offset)*sizeof(cs_float));
     p->gcount = gcount;
     return OK;
  err1:
     return csound->PerfError(csound, &(p->h),
-                             Str("grain: not initialised"));
+                             "%s", Str("grain: not initialised"));
 }
 
 #define S(x)    sizeof(x)
 
 static OENTRY localops[] =
   {
-   { "grain", S(PGRA),  TR, 3,   "a",    "xxxkkkiiio", (SUBR)agsset, (SUBR)ags }
+   { "grain", S(PGRA),  TR,    "a",    "xxxkkkiiio", (SUBR)agsset, (SUBR)ags }
   };
 
 int32_t grain_init_(CSOUND *csound)

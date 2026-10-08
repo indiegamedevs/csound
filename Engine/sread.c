@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"                             /*   SREAD.C     */
@@ -27,7 +26,9 @@
 #include <inttypes.h>
 #include "namedins.h"           /* IV - Oct 31 2002 */
 #include "corfile.h"
-#include "Engine/score_param.h"
+#include "filesys.h"
+#include "sread.h"
+#include "aops.h"
 
 #define MEMSIZ  16384           /* size of memory requests from system  */
 #define MARGIN  4096            /* minimum remaining before new request */
@@ -36,22 +37,14 @@
 
 //#define MACDEBUG (1)
 
-static void print_input_backtrace(CSOUND *csound, int needLFs,
+static void print_input_backtrace(CSOUND *csound, int32_t needLFs,
                                   void (*msgfunc)(CSOUND*, const char*, ...));
 static  void    copylin(CSOUND *), copypflds(CSOUND *);
 static  void    ifa(CSOUND *), setprv(CSOUND *);
-static  void    carryerror(CSOUND *), pcopy(CSOUND *, int, int, SRTBLK*);
+static  void    carryerror(CSOUND *), pcopy(CSOUND *, int32_t,  int32_t,  SRTBLK*);
 static  void    salcinit(CSOUND *);
 static  void    salcblk(CSOUND *), flushlin(CSOUND *);
-static  int     getop(CSOUND *), getpfld(CSOUND *, int);
-        MYFLT   stof(CSOUND *, char *);
-extern  void    *fopen_path(CSOUND *, FILE **, char *, char *, char *, int);
-extern int csound_prslex_init(void *);
-extern void csound_prsset_extra(void *, void *);
-
-extern int csound_prslex(CSOUND*, void*);
-extern int csound_prslex_destroy(void *);
-extern void cs_init_smacros(CSOUND*, PRS_PARM*, NAMES*);
+static  int32_t getop(CSOUND *), getpfld(CSOUND *, int32_t);
 
 #define STA(x)  (csound->sread.x)
 
@@ -137,13 +130,13 @@ static void scorerr(CSOUND *csound, const char *s, ...)
     csound->LongJmp(csound, 1);
 }
 
-static void print_input_backtrace(CSOUND *csound, int needLFs,
+static void print_input_backtrace(CSOUND *csound, int32_t needLFs,
                                   void (*msgfunc)(CSOUND*, const char*, ...))
 {
     IN_STACK  *curr = (csound->sread.str);
     char      *m, *lf = (needLFs ? "\n" : "");
-    int       lastinput = 0;
-    int       lastsource = 2; /* 2=current file, 1=macro, 0=#include */
+    int32_t       lastinput = 0;
+    int32_t       lastsource = 2; /* 2=current file, 1=macro, 0=#include */
 
     msgfunc(csound, Str("  section %d:  at position %d%s"), csound->sectcnt,
                     (csound->sread.linepos), lf);
@@ -177,11 +170,9 @@ static void print_input_backtrace(CSOUND *csound, int needLFs,
     return;
 }
 
-static MYFLT operate(CSOUND *csound, MYFLT a, MYFLT b, char c)
+static cs_float operate(CSOUND *csound, cs_float a, cs_float b, char c)
 {
-    MYFLT ans;
-    extern MYFLT MOD(MYFLT,MYFLT);
-
+    cs_float ans;
     switch (c) {
     case '+': ans = a + b; break;
     case '-': ans = a - b; break;
@@ -189,9 +180,9 @@ static MYFLT operate(CSOUND *csound, MYFLT a, MYFLT b, char c)
     case '/': ans = a / b; break;
     case '%': ans = MOD(a, b); break;
     case '^': ans = POWER(a, b); break;
-    case '&': ans = (MYFLT) (MYFLT2LRND(a) & MYFLT2LRND(b)); break;
-    case '|': ans = (MYFLT) (MYFLT2LRND(a) | MYFLT2LRND(b)); break;
-    case '#': ans = (MYFLT) (MYFLT2LRND(a) ^ MYFLT2LRND(b)); break;
+    case '&': ans = (cs_float) (CS_FLOAT2LRND(a) & CS_FLOAT2LRND(b)); break;
+    case '|': ans = (cs_float) (CS_FLOAT2LRND(a) | CS_FLOAT2LRND(b)); break;
+    case '#': ans = (cs_float) (CS_FLOAT2LRND(a) ^ CS_FLOAT2LRND(b)); break;
     default:
       csoundDie(csound, Str("Internal error op=%c"), c);
       ans = FL(0.0);    /* compiler only */
@@ -199,9 +190,9 @@ static MYFLT operate(CSOUND *csound, MYFLT a, MYFLT b, char c)
     return ans;
 }
 
-static inline int isNameChar(int c, int pos)
+static inline int32_t is_name_char(int32_t c, int32_t pos)
 {
-    //c = (int) ((unsigned char) c);
+    //c = (int32_t) ((unsigned char) c);
     if (UNLIKELY(c<0)) return 0;
     return (isalpha(c) || (pos && (c == '_' || isdigit(c))));
 }
@@ -209,16 +200,16 @@ static inline int isNameChar(int c, int pos)
 /* Functions to read/unread chracters from
  * a stack of file and macro inputs */
 
-static inline void ungetscochar(CSOUND *csound, int c)
+static inline void ungetscochar(CSOUND *csound, int32_t c)
 {
     corfile_ungetc(csound->expanded_sco);
     csound->expanded_sco->body[csound->expanded_sco->p] = (char)c;
 }
 
-static int getscochar(CSOUND *csound, int expand)
+static int32_t getscochar(CSOUND *csound, int32_t expand)
 {
 /* Read a score character, expanding macros if flag set */
-    int     c;
+    int32_t     c;
     IGN(expand);
 /* Read a score character, expanding macros expanded */
     c = corfile_getc(csound->expanded_sco);
@@ -268,9 +259,9 @@ void sread_initstr(CSOUND *csound, CORFIL *sco)
     }
 }
 
-int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
+int32_t sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
 {                               /*  each score statement gets a sortblock   */
-    int  rtncod;                /* return code to calling program:      */
+    int32_t  rtncod;                /* return code to calling program:      */
                                 /*   1 = section read                   */
                                 /*   0 = end of file                    */
     /* sread_alloc_globals(csound); */
@@ -282,16 +273,6 @@ int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
     csound->sectcnt++;
     rtncod = 0;
     salcinit(csound);           /* init the mem space for this section  */
-#ifdef never
-    if (csound->score_parser) {
-      extern int scope(CSOUND*);
-      printf("**********************************************************\n");
-      printf("*******************EXPERIMENTAL CODE**********************\n");
-      printf("**********************************************************\n");
-      scope(csound);
-      exit(0);
-    }
-#endif
     //printf("sread starts with >>%s<<\n", csound->expanded_sco->body);
     while (((csound->sread.op) = getop(csound)) != EOF) {
       /* read next op from scorefile */
@@ -316,9 +297,9 @@ int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
           p = &((csound->sread.bp)->text[1]);
           while (isblank(q=*p)) p++;
           if (isdigit(q) || q=='+' || q=='-' || q=='.') {
-            double  tt;
+            cs_double  tt;
             char    *tmp = p;
-            tt = cs_strtod(p, &tmp);
+            tt = csoundStrtod(p, &tmp);
             //printf("tt=%lf q=%c\n", tt, q);
             csound->randSeed1 = (int)tt;
             printf("seed from score %d\n", csound->randSeed1);
@@ -402,14 +383,14 @@ int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
           /*         if (strchr("+-.0123456789", *p) != NULL) { */
           q = *p;
           if (isdigit(q) || q=='+' || q=='-' || q=='.') {
-            double  tt;
+            cs_double  tt;
             char    *tmp = p;
-            tt = cs_strtod(p, &tmp);
+            tt = csoundStrtod(p, &tmp);
             if (tmp != p && (*tmp == '\0' || isspace(*tmp))) {
               (csound->sread.bp)->pcnt = 1;
               (csound->sread.bp)->p1val =
                 (csound->sread.bp)->p2val =
-                (csound->sread.bp)->newp2 = (MYFLT) tt;
+                (csound->sread.bp)->newp2 = (cs_float) tt;
             }
           }
           else (csound->sread.bp)->p1val =
@@ -444,10 +425,10 @@ int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
         {
           char  *old_nxp = (csound->sread.nxp)-2;
           char  buff[200];
-          int   c;
-          int   i = 0, j;
+          int32_t   c;
+          int32_t   i = 0, j;
           while (isblank(c = getscochar(csound, 1)));
-          while (isNameChar(c, i)) {
+          while (is_name_char(c, i)) {
             buff[i++] = c;
             c = getscochar(csound, 1);
           }
@@ -463,7 +444,7 @@ int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
           }
           if (j>=(csound->sread.last_name)) {
             j = ++(csound->sread.last_name);
-            (csound->sread.names)[j].name =cs_strdup(csound, buff);
+            (csound->sread.names)[j].name =csoundStrdup(csound, buff);
           }
           (csound->sread.names)[j].posit =
             corfile_tell(csound->expanded_sco);
@@ -485,10 +466,10 @@ int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
         {
           char *old_nxp = (csound->sread.nxp)-2;
           char buff[200];
-          int c;
-          int i = 0;
+          int32_t c;
+          int32_t i = 0;
           while (isblank(c = getscochar(csound, 1)));
-          while (isNameChar(c, i)) {
+          while (is_name_char(c, i)) {
             buff[i++] = c;
             c = getscochar(csound, 1);
           }
@@ -509,7 +490,7 @@ int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
             //                i, buff, (csound->sread.names)[i].posit);
             (csound->sread.input_cnt)++;
             if (csound->sread.input_cnt>=csound->sread.input_size) {
-              int old = (csound->sread.str)-(csound->sread.inputs);
+              int32_t old = (int32_t)((csound->sread.str)-(csound->sread.inputs));
               (csound->sread.input_size) += 20;
               (csound->sread.inputs) =
                 csound->ReAlloc(csound, (csound->sread.inputs),
@@ -598,7 +579,7 @@ int sread(CSOUND *csound)       /*  called from main,  reads from SCOREIN   */
 
 static void copylin(CSOUND *csound)     /* copy source line to srtblk   */
 {
-    int c;
+    int32_t c;
     (csound->sread.nxp)--;
     if (csound->sread.nxp >= csound->sread.memend)
       /* if this memblk exhausted */
@@ -623,22 +604,16 @@ static void copypflds(CSOUND *csound)
 static void ifa(CSOUND *csound)
 {
     SRTBLK *prvbp;
-    int n, nocarry = 0;
+    int32_t n, nocarry = 0;
 
     (csound->sread.bp)->pcnt = 0;
     while (getpfld(csound,0)) {   /* while there's another pfield,  */
       nocarry = 0;
       ++(csound->sread.bp)->pcnt;
-      /* if (UNLIKELY(++(csound->sread.bp)->pcnt == PMAX)) { */
-      /*   sreaderr(csound, Str("instr pcount exceeds PMAX")); */
-      /*   csound->Message(csound, Str("      remainder of line flushed\n")); */
-      /*   flushlin(csound); */
-      /*   continue; */
-      /* } */
       if (*(csound->sread.sp) == '^' &&
           (csound->sread.op) == 'i' &&
           (csound->sread.bp)->pcnt == 2) {
-        int foundplus = 0;
+        int32_t foundplus = 0;
         if (*((csound->sread.sp)+1)=='+') {
           (csound->sread.sp)++; foundplus = 1;
         }
@@ -676,7 +651,7 @@ static void ifa(CSOUND *csound)
                     && prvbp->text[0] == 'i'))) {
           if (*(csound->sread.sp) == '.') {
             (csound->sread.nxp) = (csound->sread.sp);
-            pcopy(csound, (int) (csound->sread.bp)->pcnt, 1, prvbp);
+            pcopy(csound, (int32_t) (csound->sread.bp)->pcnt, 1, prvbp);
             if ((csound->sread.bp)->pcnt >= 2)
               (csound->sread.prvp2) = (csound->sread.bp)->p2val;
           }
@@ -687,7 +662,7 @@ static void ifa(CSOUND *csound)
         else carryerror(csound);
       }
       else if (*(csound->sread.sp) == '!') {
-        int getmore = 0;
+        int32_t getmore = 0;
         if (UNLIKELY((csound->sread.op) != 'i')) {
           *((csound->sread.nxp)-1) = '\0';
           getmore = 1;
@@ -717,7 +692,7 @@ static void ifa(CSOUND *csound)
         else break;
       }
       else switch ((csound->sread.bp)->pcnt) { /*  watch for p1,p2,p3, */
-        case 1:                           /*   & MYFLT, setinsno..*/
+        case 1:                           /*   & cs_float, setinsno..*/
           if (((csound->sread.op) == 'i' ||
                (csound->sread.op) == 'd' ||
                (csound->sread.op) == 'q') &&
@@ -779,7 +754,7 @@ static void ifa(CSOUND *csound)
          (!(csound->sread.bp)->pcnt &&
           (prvbp = (csound->sread.bp)->prvblk) != NULL &&
           prvbp->text[0] == 'i'))){ /* carry p1-p3 */
-      int pcnt = (csound->sread.bp)->pcnt;
+      int32_t pcnt = (csound->sread.bp)->pcnt;
       n = 3-pcnt;
       pcopy(csound, pcnt + 1, n, prvbp);
       (csound->sread.bp)->pcnt = 3;
@@ -792,21 +767,21 @@ static void ifa(CSOUND *csound)
           prvbp->text[0] == 'i')) &&
         (n = prvbp->pcnt - (csound->sread.bp)->pcnt) > 0) {
       //printf("carrying p-fields\n");
-      pcopy(csound, (int) (csound->sread.bp)->pcnt + 1, n, prvbp);
+      pcopy(csound, (int32_t) (csound->sread.bp)->pcnt + 1, n, prvbp);
       (csound->sread.bp)->pcnt += n;
     }
     *((csound->sread.nxp)-1) = LF;   /* terminate this stmnt with newline */
 }
 
-static void setprv(CSOUND *csound)      /*  set insno = (int) p1val         */
+static void setprv(CSOUND *csound)      /*  set insno = (int32_t) p1val         */
 {                                       /*  prvibp = prv note, same insno   */
     SRTBLK *p = (csound->sread.bp);
     int16 n;
 
-    if (csound->ISSTRCOD((csound->sread.bp)->p1val) &&
+    if (IsStringCode((csound->sread.bp)->p1val) &&
         *(csound->sread.sp) == '"') {
       /* IV - Oct 31 2002 */
-      int sign = 0;
+      int32_t sign = 0;
       char name[MAXNAME], *c, *s = (csound->sread.sp);
       /* unquote instrument name */
       c = name; while (*++s != '"') *c++ = *s; *c = '\0';
@@ -847,13 +822,13 @@ static void carryerror(CSOUND *csound)      /* print offending text line  */
     *((csound->sread.nxp) - 2) = '0';
 }
 
-static void pcopy(CSOUND *csound, int pfno, int ncopy, SRTBLK *prvbp)
+static void pcopy(CSOUND *csound, int32_t pfno, int32_t ncopy, SRTBLK *prvbp)
                                 /* cpy pfields from prev note of this instr */
                                 /*     begin at pfno, copy 'ncopy' fields   */
                                 /*     uses *nxp++;    sp untouched         */
 {
     char *p, *pp, c;
-    int  n;
+    int32_t  n;
 
     pp = prvbp->text;                       /* in text of prev note,    */
     n = pfno;
@@ -946,7 +921,7 @@ void sfree(CSOUND *csound)       /* free all sorter allocated space */
 
 static void flushlin(CSOUND *csound)
 {                                   /* flush input to end-of-line; inc lincnt */
-    int c;
+    int32_t c;
     while ((c = getscochar(csound, 0)) != LF && c != EOF)
       ;
     (csound->sread.linpos) = 0;
@@ -954,9 +929,9 @@ static void flushlin(CSOUND *csound)
 }
 
 /* unused at the moment
-static inline int check_preproc_name(CSOUND *csound, const char *name)
+static inline int32_t check_preproc_name(CSOUND *csound, const char *name)
 {
-    int   i;
+    int32_t   i;
     char  c;
     for (i = 1; name[i] != '\0'; i++) {
       c = (char) getscochar(csound, 1);
@@ -967,9 +942,9 @@ static inline int check_preproc_name(CSOUND *csound, const char *name)
 }
 */
 
-static int sget1(CSOUND *csound)    /* get first non-white, non-comment char */
+static int32_t sget1(CSOUND *csound)    /* get first non-white, non-comment char */
 {
-    int c;
+    int32_t c;
 
     //srch:
     while (isblank(c = getscochar(csound, 1)) || c == LF)
@@ -986,9 +961,9 @@ static int sget1(CSOUND *csound)    /* get first non-white, non-comment char */
     return c;
 }
 
-static int getop(CSOUND *csound)        /* get next legal opcode */
+static int32_t getop(CSOUND *csound)        /* get next legal opcode */
 {
-    int c;
+    int32_t c;
 
  nextc:
     c = sget1(csound);  /* get first active char */
@@ -1026,19 +1001,59 @@ static int getop(CSOUND *csound)        /* get next legal opcode */
     return(c);
 }
 
-static MYFLT read_expression(CSOUND *csound)
+#define SCORE_EXPR_STACK_SIZE 30
+#define SCORE_EXPR_NUMBER_SIZE 100
+
+typedef struct {
+  char ops[SCORE_EXPR_STACK_SIZE];
+  cs_float values[SCORE_EXPR_STACK_SIZE];
+  int32_t opCount, valueCount;
+} SCORE_EXPR;
+
+static void score_expr_push_op(CSOUND *csound, SCORE_EXPR *expr, char op)
 {
-      char  stack[30];
-      MYFLT vv[30];
-      char  *op = stack - 1;
-      MYFLT *pv = vv - 1;
-      char  buffer[100];
-      int   i, c;
-      int   type = 0;  /* 1 -> expecting binary operator,')', or ']'; else 0 */
-      *++op = '[';
+  if (UNLIKELY(expr->opCount == SCORE_EXPR_STACK_SIZE))
+    scorerr(csound, Str("score expression operator stack full"));
+  expr->ops[expr->opCount++] = op;
+}
+
+static void score_expr_push_value(CSOUND *csound, SCORE_EXPR *expr, cs_float value)
+{
+  if (UNLIKELY(expr->valueCount == SCORE_EXPR_STACK_SIZE))
+    scorerr(csound, Str("score expression value stack full"));
+  expr->values[expr->valueCount++] = value;
+}
+
+static void score_expr_reduce(CSOUND *csound, SCORE_EXPR *expr)
+{
+  if (UNLIKELY(expr->valueCount < 2))
+    scorerr(csound, Str("missing operand in score expression"));
+  cs_float right = expr->values[--expr->valueCount];
+  cs_float left = expr->values[expr->valueCount - 1];
+  expr->values[expr->valueCount - 1] =
+    operate(csound, left, right, expr->ops[--expr->opCount]);
+}
+
+static void score_expr_append_char(CSOUND *csound, char *buffer,
+                                   int32_t *length, int32_t c)
+{
+  if (UNLIKELY(*length == SCORE_EXPR_NUMBER_SIZE - 1))
+    scorerr(csound, Str("number too long in score expression"));
+  buffer[(*length)++] = (char)c;
+}
+
+static cs_float read_expression(CSOUND *csound, int32_t depth)
+{
+      SCORE_EXPR expr = {{0}, {0}, 0, 0};
+      char buffer[SCORE_EXPR_NUMBER_SIZE];
+      int32_t i, c;
+      int32_t type = 0; /* 1: expecting an operator or closing delimiter */
+      if (UNLIKELY(depth >= SCORE_EXPR_STACK_SIZE))
+        scorerr(csound, Str("score expression nested too deeply"));
+      score_expr_push_op(csound, &expr, '[');
       c = getscochar(csound, 1);
-      do {
-        //printf("read_expression: c=%c\n", c);
+      for (;;) {
+        char top = expr.ops[expr.opCount - 1];
         switch (c) {
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
@@ -1050,24 +1065,23 @@ static MYFLT read_expression(CSOUND *csound)
  parseNumber:
           i = 0;
           do {
-            buffer[i++] = c;
+            score_expr_append_char(csound, buffer, &i, c);
             c = getscochar(csound, 1);
           } while (isdigit(c) || c == '.');
           if (c == 'e' || c == 'E') {
-            buffer[i++] = c;
+            score_expr_append_char(csound, buffer, &i, c);
             c = getscochar(csound, 1);
             if (c == '+' || c == '-') {
-              buffer[i++] = c;
+              score_expr_append_char(csound, buffer, &i, c);
               c = getscochar(csound, 1);
             }
             while (isdigit(c)) {
-              buffer[i++] = c;
+              score_expr_append_char(csound, buffer, &i, c);
               c = getscochar(csound, 1);
             }
           }
           buffer[i] = '\0';
-          //printf("****>>%s<<\n", buffer);
-          *++pv = stof(csound, buffer);
+          score_expr_push_value(csound, &expr, stof(csound, buffer));
           type = 1;
           break;
         case '~':
@@ -1075,8 +1089,8 @@ static MYFLT read_expression(CSOUND *csound)
             scorerr(csound, Str("illegal placement of operator ~ in [] "
                                 "expression"));
           }
-          *++pv = (MYFLT) (csound->Rand31(&(csound->randSeed1)) - 1)
-                  / FL(2147483645);
+          score_expr_push_value(csound, &expr,
+            (cs_float)(csound->Rand31(&(csound->randSeed1)) - 1) / FL(2147483645));
           type = 1;
           c = getscochar(csound, 1);
           break;
@@ -1086,30 +1100,30 @@ static MYFLT read_expression(CSOUND *csound)
                                 " [] expression"));
           }
           {
-            int n = 0;
-            int k = 0;          /* 0 or 1 depending on guard bit */
+            int32_t n = 0;
+            int32_t k = 0;          /* 0 or 1 depending on guard bit */
             c = getscochar(csound, 1);
             if (c=='@') { k = 1; c = getscochar(csound, 1);}
             while (isdigit(c)) {
-              n = 10*n + c - '0';
+              if (UNLIKELY(n > (INT32_MAX - (c - '0')) / 10))
+                scorerr(csound, Str("integer overflow in @ expression"));
+              n = 10*n + (c - '0');
               c = getscochar(csound, 1);
             }
             i = 1;
             while (i<=n-k && i< 0x4000000) i <<= 1;
-            *++pv = (MYFLT)(i+k);
+            score_expr_push_value(csound, &expr, (cs_float)(i+k));
             type = 1;
           }
           break;
         case '+': case '-':
           if (!type)
             goto parseNumber;
-          if (*op != '[' && *op != '(') {
-            MYFLT v = operate(csound, *(pv-1), *pv, *op);
-            op--; pv--;
-            *pv = v;
+          if (top != '[' && top != '(') {
+            score_expr_reduce(csound, &expr);
           }
           type = 0;
-          *++op = c; c = getscochar(csound, 1); break;
+          score_expr_push_op(csound, &expr, c); c = getscochar(csound, 1); break;
         case '*':
         case '/':
         case '%':
@@ -1117,13 +1131,11 @@ static MYFLT read_expression(CSOUND *csound)
             scorerr(csound, Str("illegal placement of operator %c in [] "
                                 "expression"), c);
           }
-          if (*op == '*' || *op == '/' || *op == '%') {
-            MYFLT v = operate(csound, *(pv-1), *pv, *op);
-            op--; pv--;
-            *pv = v;
+          if (top == '*' || top == '/' || top == '%') {
+            score_expr_reduce(csound, &expr);
           }
           type = 0;
-          *++op = c; c = getscochar(csound, 1); break;
+          score_expr_push_op(csound, &expr, c); c = getscochar(csound, 1); break;
         case '&':
         case '|':
         case '#':
@@ -1131,63 +1143,76 @@ static MYFLT read_expression(CSOUND *csound)
             scorerr(csound, Str("illegal placement of operator %c in [] "
                                 "expression"), c);
           }
-          if (*op == '|' || *op == '&' || *op == '#') {
-            MYFLT v = operate(csound, *(pv-1), *pv, *op);
-            op--; pv--;
-            *pv = v;
+          if (top == '|' || top == '&' || top == '#') {
+            score_expr_reduce(csound, &expr);
           }
           type = 0;
-          *++op = c; c = getscochar(csound, 1); break;
+          score_expr_push_op(csound, &expr, c); c = getscochar(csound, 1); break;
         case '(':
           if (UNLIKELY(type)) {
             scorerr(csound, Str("illegal placement of '(' in [] expression"));
           }
           type = 0;
-          *++op = c; c = getscochar(csound, 1); break;
+          score_expr_push_op(csound, &expr, c); c = getscochar(csound, 1); break;
         case ')':
           if (UNLIKELY(!type)) {
-            scorerr(csound, Str("missing operand before ')' in [] expression"));
+            csound->inerrcnt++;
+            csound->ErrorMsg(csound,
+                             Str("score error: missing operand before ')' in [] expression"));
+            print_input_backtrace(csound, 1, csoundErrorMsg);
+            flushlin(csound);
+            return FL(0.0);
           }
-          while (*op != '(') {
-            MYFLT v = operate(csound, *(pv-1), *pv, *op);
-            op--; pv--;
-            *pv = v;
+          while (expr.ops[expr.opCount - 1] != '(' &&
+                 expr.ops[expr.opCount - 1] != '[') {
+            score_expr_reduce(csound, &expr);
+          }
+          if (UNLIKELY(expr.ops[expr.opCount - 1] != '(')) {
+            csound->inerrcnt++;
+            csound->ErrorMsg(csound,
+                             Str("score error: unmatched ')' in [] expression"));
+            print_input_backtrace(csound, 1, csoundErrorMsg);
+            flushlin(csound);
+            return expr.values[expr.valueCount - 1];
           }
           type = 1;
-          op--; c = getscochar(csound, 1); break;
+          --expr.opCount; c = getscochar(csound, 1); break;
         case '^':
+          if (UNLIKELY(!type))
+            scorerr(csound, Str("missing operand before '^' in [] expression"));
           type = 0;
-          *++op = c; c = getscochar(csound, 1); break;
+          score_expr_push_op(csound, &expr, c); c = getscochar(csound, 1); break;
         case '[':
           if (UNLIKELY(type)) {
             scorerr(csound, Str("illegal placement of '[' in [] expression"));
           }
           type = 1;
           {
-            //int i;
-            MYFLT x;
-            //for (i=0;i<=pv-vv;i++) printf(" %lf ", vv[i]);
-            //printf("| %d\n", pv-vv);
-            x = read_expression(csound);
-            *++pv = x;
-            //printf("recursion gives %lf (%lf)\n", x,*(pv-1));
-            //for (i=0;i<pv-vv;i++) printf(" %lf ", vv[i]); printf("| %d\n", pv-vv);
+            cs_float x = read_expression(csound, depth + 1);
+            score_expr_push_value(csound, &expr, x);
             c = getscochar(csound, 1); break;
           }
         case ']':
           if (UNLIKELY(!type)) {
             scorerr(csound, Str("missing operand before closing bracket in []"));
           }
-          while (*op != '[') {
-            MYFLT v = operate(csound, *(pv-1), *pv, *op);
-            op--; pv--;
-            *pv = v;
+          while (expr.ops[expr.opCount - 1] != '[' &&
+                 expr.ops[expr.opCount - 1] != '(') {
+            score_expr_reduce(csound, &expr);
           }
-          //printf("done ]*** *op=%c v=%lg (%c)\n", *op, *pv, c);
-          //getscochar(csound, 1);
-          /* c = '$'; */ return *pv;
+          if (UNLIKELY(expr.ops[expr.opCount - 1] != '[')) {
+            csound->inerrcnt++;
+            csound->ErrorMsg(csound,
+                             Str("score error: unmatched ']' in [] expression"));
+            print_input_backtrace(csound, 1, csoundErrorMsg);
+            flushlin(csound);
+            return expr.values[expr.valueCount - 1];
+          }
+          return expr.values[expr.valueCount - 1];
         case '$':
-          break;
+        case EOF:
+          scorerr(csound, Str("missing closing bracket in score expression"));
+          return FL(0.0);
         case ' ':               /* Ignore spaces */
           c = getscochar(csound, 1);
           continue;
@@ -1195,20 +1220,19 @@ static MYFLT read_expression(CSOUND *csound)
           scorerr(csound, Str("illegal character %c(%.2x) in [] expression"),
                   c, c);
         }
-      } while (c != '$');
-      return *pv;
+      }
 }
 
 
-static int getpfld(CSOUND *csound, int type) /* get pfield val from SCOREIN file */
+static int32_t getpfld(CSOUND *csound, int32_t type) /* get pfield val from SCOREIN file */
 {                                            /*      set sp, nxp                 */
-    int  c;
+    int32_t  c;
     char *p;
 
     if ((c = sget1(csound)) == EOF)     /* get 1st non-white,non-comment c  */
       return(0);
     if (c=='[') {
-      MYFLT xx = read_expression(csound);
+      cs_float xx = read_expression(csound, 0);
       //printf("****xx=%a\n", xx);
       //printf("nxp = %p\n", (csound->sread.nxp));
       snprintf((csound->sread.sp) = (csound->sread.nxp), 28, "%a$", xx);
@@ -1285,11 +1309,11 @@ static int getpfld(CSOUND *csound, int type) /* get pfield val from SCOREIN file
     return(1);                              /*  and report ok  */
 }
 
-MYFLT stof(CSOUND *csound, char s[])            /* convert string to MYFLT  */
+cs_float stof(CSOUND *csound, char s[])            /* convert string to cs_float  */
                                     /* (assumes no white space at beginning */
 {                                   /*      but a blank or nl at end)       */
     char    *p;
-    MYFLT   x = (MYFLT) cs_strtod(s, &p);
+    cs_float   x = (cs_float) csoundStrtod(s, &p);
     if (*p=='z') return FL(800000000000.0); /* 25367 years */
     if (UNLIKELY(s == p || !(*p == '\0' || isspace(*p)))) {
       csound->Message(csound, Str("sread: illegal number format:  "));

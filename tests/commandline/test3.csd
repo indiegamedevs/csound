@@ -1,3 +1,9 @@
+<CsTest>
+description = "Simple Test, using i-rate variables, 2 Channel"
+
+[expect]
+exit = 0
+</CsTest>
 <CsoundSynthesizer>
 
 <CsInstruments>
@@ -9,12 +15,11 @@ nchnls=2
 
 	instr 1	;untitled
 
-iamp = 10000
-ifreq = 440
+iamp,ifreq = 10000,440
 
-aout	vco2 iamp, ifreq
+aout1,aout2 = vco2(iamp, ifreq), vco2(iamp,ifreq)
 
-	outs aout, aout
+	outs aout1, aout2
 	endin
 
 

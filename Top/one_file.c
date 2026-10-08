@@ -17,13 +17,11 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include "csoundCore.h"
 #include <stdlib.h>
-int mkstemp(char *);
 #include <ctype.h>
 #ifndef __wasi__
 #include <errno.h>
@@ -49,8 +47,6 @@ int mkstemp(char *);
 #  define FALSE (0)
 #endif
 
-//#define _DEBUG
-
 /* These are used to set/clear bits in csound->tempStatus.
    If the bit is set, it indicates that the given file is
    a temporary. */
@@ -62,69 +58,105 @@ const uint32_t csPlayScoMask = 16;
 
 #define STA(x)   (csound->onefileStatics.x)
 
-CS_NOINLINE char *csoundTmpFileName(CSOUND *csound, const char *ext)
+CS_NOINLINE static char *tmp_file_name(CSOUND *csound, const char *ext)
 {
-#define   nBytes (256)
-    char lbuf[256];
-#if defined(WIN32) && !defined(__CYGWIN__)
+    enum { nBytes = 256 };
+    char lbuf[nBytes];
+
+#if defined(__wasi__)
+
+    /* WASI: no POSIX signals/umask, temp dirs depend on preopened FDs.
+       We just fabricate a unique-ish name in TMPDIR or "." and DO NOT create the file. */
+    const char *tmpdir = getenv("TMPDIR");
+    if (tmpdir == NULL || tmpdir[0] == '\0')
+        tmpdir = ".";
+
+    /* Prefer arc4random() if available (wasi-libc provides it). */
+    unsigned r1 = 0u, r2 = 0u;
+    /* If arc4random is unavailable, these stay 0; still fine for a temp *name* hint. */
+    #if defined(__has_include)
+    #  if __has_include(<stdlib.h>)
+         r1 = (unsigned)arc4random();
+         r2 = (unsigned)arc4random();
+    #  endif
+    #else
+         r1 = (unsigned)arc4random();
+         r2 = (unsigned)arc4random();
+    #endif
+
+    if (ext && ext[0] != '\0')
+        snprintf(lbuf, nBytes, "%s/csound-%08x%08x%s", tmpdir, r1, r2, ext);
+    else
+        snprintf(lbuf, nBytes, "%s/csound-%08x%08x",   tmpdir, r1, r2);
+
+    /* Optionally, you could loop/stat() to avoid collisions, but for WASI it's usually enough
+       to just return a unique-looking name; the caller will open/create it later. */
+    return csoundStrdup(csound, lbuf);
+
+#elif defined(WIN32) && !defined(__CYGWIN__)
+
+    /* Windows: use _tempnam() since mkstemp() is not available. */
     struct _stat tmp;
-#else
-    struct stat tmp;
-#endif
     do {
-#ifndef WIN32
-      int fd;
-      char *tmpdir = getenv("TMPDIR");
-      if (tmpdir != NULL && tmpdir[0] != '\0')
-        snprintf(lbuf, nBytes, "%s/csound-XXXXXX", tmpdir);
-      else
-        strcpy(lbuf, "/tmp/csond-XXXXXX");
-      umask(0077);
-        /* ensure exclusive access on buggy implementations of mkstemp */
-      if (UNLIKELY((fd = mkstemp(lbuf)) < 0))
-        csound->Die(csound, Str(" *** cannot create temporary file"));
-      close(fd);
-      //unlink(lbuf);
-#else
-      {
-        char  *s = (char*) csoundGetEnv(csound, "SFDIR");
+        char *s = (char*) csoundGetEnv(csound, "SFDIR");
         if (s == NULL)
-          s = (char*) csoundGetEnv(csound, "HOME");
+            s = (char*) csoundGetEnv(csound, "HOME");
         s = _tempnam(s, "cs");
         if (UNLIKELY(s == NULL))
-          csound->Die(csound, Str(" *** cannot create temporary file"));
+            csound->Die(csound, Str(" *** cannot create temporary file"));
         strNcpy(lbuf, s, nBytes);
         free(s);
-      }
-#endif
-      if (ext != NULL && ext[0] != (char) 0) {
-#if !defined(LINUX) && !defined(__MACH__) && !defined(WIN32)
-        char  *p;
-        /* remove original extension (does not work on OS X */
-        /* and may be a bad idea) */
-        if ((p = strrchr(lbuf, '.')) != NULL)
-          *p = '\0';
-#endif
-        strlcat(lbuf, ext, nBytes);
-      }
-#ifdef __MACH__
-      /* on MacOS X, store temporary files in /tmp instead of /var/tmp */
-      /* (suggested by Matt Ingalls) */
-      if (strncmp(lbuf, "/var/tmp/", 9) == 0) {
-        int i = 3;
-        do {
-          i++;
-          lbuf[i - 4] = lbuf[i];
-          } while (lbuf[i] != '\0');
-      }
-#endif
-#if defined(WIN32)
+
+        if (ext && ext[0] != '\0')
+            strlcat(lbuf, ext, nBytes);
     } while (_stat(lbuf, &tmp) == 0);
-#else
-      /* if the file already exists, try again */
+
+    return csoundStrdup(csound, lbuf);
+
+#else /* Unix/POSIX */
+
+    /* Non-WASI, non-Windows: preserve original mkstemp-based flow. */
+    struct stat tmp;
+    int32_t fd;
+
+    do {
+        const char *tmpdir = getenv("TMPDIR");
+        if (tmpdir && tmpdir[0] != '\0')
+            snprintf(lbuf, nBytes, "%s/csound-XXXXXX", tmpdir);
+        else
+            strcpy(lbuf, "/tmp/csound-XXXXXX");
+
+        /* Restrictive perms for the temp file (when supported). */
+        #ifndef BARE_METAL
+            umask(0077);
+        #endif
+
+        /* Ensure exclusive creation (workaround "buggy mkstemp" comment kept). */
+        fd = mkstemp(lbuf);
+        if (UNLIKELY(fd < 0))
+            csound->Die(csound, Str(" *** cannot create temporary file"));
+        close(fd);
+
+        if (ext && ext[0] != '\0') {
+            #if !defined(LINUX) && !defined(__MACH__)
+            char *p = strrchr(lbuf, '.');
+            if (p) *p = '\0';
+            #endif
+            strlcat(lbuf, ext, nBytes);
+        }
+
+        #ifdef __MACH__
+        /* macOS: normalize /var/tmp -> /tmp (historic behavior). */
+        if (strncmp(lbuf, "/var/tmp/", 9) == 0) {
+            /* shift left by 4 chars to drop "/var" prefix, including '\0' */
+            memmove(lbuf, lbuf + 4, strlen(lbuf + 4) + 1);
+        }
+        #endif
+
+        /* Loop if the name somehow already exists (paranoia). */
     } while (stat(lbuf, &tmp) == 0);
 #endif
-return cs_strdup(csound, lbuf);
+return csoundStrdup(csound, lbuf);
 }
 
 static inline void alloc_globals(CSOUND *csound)
@@ -133,12 +165,12 @@ static inline void alloc_globals(CSOUND *csound)
     STA(csdlinecount) = 0;
 }
 
-static char *my_fgets(CSOUND *csound, char *s, int n, FILE *stream)
+static char *my_fgets(CSOUND *csound, char *s, int32_t n, FILE *stream)
 {
     char *a = s;
     if (UNLIKELY(n <= 1)) return NULL;        /* best of a bad deal */
     do {
-      int ch = getc(stream);
+      int32_t ch = getc(stream);
       if (UNLIKELY(ch == EOF)) {             /* error or EOF       */
         if (s == a) return NULL;             /* no chars -> leave  */
         if (ferror(stream)) a = NULL;
@@ -189,7 +221,7 @@ void add_tmpfile(CSOUND *csound, char *name)    /* IV - Feb 03 2005 */
     STA(toremove) = tmp;
 }
 
-static int blank_buffer(/*CSOUND *csound,*/ char *buffer)
+static int32_t blank_buffer(/*CSOUND *csound,*/ const char *buffer)
 {
     const char *s;
     for (s = &(buffer[0]); *s != '\0' && *s != '\n'; s++) {
@@ -203,12 +235,12 @@ static int blank_buffer(/*CSOUND *csound,*/ char *buffer)
 
 
 /* Consider wrapping corfile_fgets for this function */
-static char *my_fgets_cf(CSOUND *csound, char *s, int n, CORFIL *stream)
+static char *my_fgets_cf(CSOUND *csound, char *s, int32_t n, CORFIL *stream)
 {
     char *a = s;
     if (UNLIKELY(n <= 1)) return NULL;        /* best of a bad deal */
     do {
-      int ch = corfile_getc(stream);
+      int32_t ch = corfile_getc(stream);
       if (UNLIKELY(ch == EOF)) {             /* error or EOF       */
         if (s == a) return NULL;             /* no chars -> leave  */
         break;
@@ -229,12 +261,27 @@ static char *my_fgets_cf(CSOUND *csound, char *s, int n, CORFIL *stream)
     return a;
 }
 
-/* readingCsOptions should be non-zero when readOptions() is called
+/* Remove the 0x03 and 0x18 characters that the option parser inserted
+ * to handle quoted arguments and escaped characters. */
+static void remove_special_placeholders(char *s, size_t n)
+{
+    size_t  i, offset = 0;
+
+    for (i = 0; i <= n; i++) {
+        if (s[i] == 0x03 || s[i] == 0x18) {
+            offset++;
+        } else if (offset > 0) {
+            s[i-offset] = s[i];
+        }
+    }
+}
+
+/* readingCsOptions should be non-zero when read_options() is called
    while reading the <CsOptions> tag, but zero in other cases. */
-int readOptions(CSOUND *csound, CORFIL *cf, int readingCsOptions)
+int32_t read_options(CSOUND *csound, CORFIL *cf, int32_t readingCsOptions)
 {
     char  *p;
-    int   argc = 0;
+    int32_t   argc = 0;
     const char  *argv[CSD_MAX_ARGS];
     char  buffer[CSD_MAX_LINE_LEN];
 
@@ -243,7 +290,7 @@ int readOptions(CSOUND *csound, CORFIL *cf, int readingCsOptions)
       p = buffer;
       /* Remove trailing spaces; rather heavy handed */
       {
-        int len = strlen(p)-2;
+        int32_t len = (int32_t) strlen(p)-2;
         while (len>0 && (isblank(p[len]))) len--;
         p[len+1] = '\n'; p[len+2] = '\0';
       }
@@ -287,10 +334,14 @@ int readOptions(CSOUND *csound, CORFIL *cf, int readingCsOptions)
               p++;
             }
             if (*p == '"') {
+              if (isspace(*(p+1))) {
+                *p++ = '\0';
+                /* The quoted argument was already added above. */
+                continue;
+              }
               /* ETX char used to mark the limits of a string */
-              *p = (isspace(*(p+1)) ? '\0' : 3);
+              *p = 3;
             }
-            //            break;
           }
 
           if (*p==';' ||
@@ -321,7 +372,7 @@ int readOptions(CSOUND *csound, CORFIL *cf, int readingCsOptions)
           break;
         }
         else if (*p=='"' && *(p-1) != '\\') {
-          int is_escape = 0;
+          int32_t is_escape = 0;
           char *old = NULL;
           *p=3; /* ETX char used to mark the limits of a string */
           while ((*p != '"' || is_escape) && *p != '\0') {
@@ -334,6 +385,7 @@ int readOptions(CSOUND *csound, CORFIL *cf, int readingCsOptions)
           if (*p == '"') {
             if (isspace(*(p+1))) {
               *p = '\0';
+              remove_special_placeholders((char *)argv[argc], strlen(argv[argc]));
               break;
             }
             else {
@@ -346,7 +398,7 @@ int readOptions(CSOUND *csound, CORFIL *cf, int readingCsOptions)
       //argc++;                /* according to Nicola but wrong */
 #ifdef _DEBUG
       {
-        int i;
+        int32_t i;
         for (i=0;  i<=argc; i++) printf("%d: %s\n", i, argv[i]);
       }
 #endif
@@ -356,20 +408,20 @@ int readOptions(CSOUND *csound, CORFIL *cf, int readingCsOptions)
           csoundErrorMsg(csound, Str("Invalid arguments in <CsOptions>: %s"),
                          buffer);
         else csoundErrorMsg(csound,
-                         Str("Invalid arguments in .csound6rc or -@ file: %s"),
+                         Str("Invalid arguments in .csound7rc or -@ file: %s"),
                          buffer);
       }
       else argdecode(csound, argc, argv);
     }
     if (UNLIKELY(readingCsOptions))
-      csoundErrorMsg(csound, Str("Missing end tag </CsOptions>"));
+      csoundErrorMsg(csound, Str("Missing end tag </CsOptions>\n"));
     return FALSE;
 }
 
 
 
-#if 1
-static int all_blank(char* start, char* end)
+#if 0
+static int32_t all_blank(char* start, char* end)
 {
     while (start != end) {
       if (!isblank(*start)) return 0;
@@ -378,17 +430,17 @@ static int all_blank(char* start, char* end)
     return 1;
 }
 
-static int createOrchestra(CSOUND *csound, CORFIL *cf)
+static int32_t create_orchestra(CSOUND *csound, CORFIL *cf)
 {
     char  *p, *q;
     CORFIL *incore = corfile_create_w(csound);
     char  buffer[CSD_MAX_LINE_LEN];
-    int state = 0;
+    int32_t state = 0;
 
     csound->orcLineOffset = STA(csdlinecount)+1;
  nxt:
     while (my_fgets_cf(csound, buffer, CSD_MAX_LINE_LEN, cf)!= NULL) {
-      int c;
+      int32_t c;
       p = buffer;
 
       if (state == 0 &&
@@ -431,7 +483,7 @@ static int createOrchestra(CSOUND *csound, CORFIL *cf)
           }
           else if (c=='"') { state =  0; goto top;}
         }
-        csoundErrorMsg(csound, Str("missing \" to terminate string"));
+        csoundErrorMsg(csound, Str("CsInstruments: missing \" to terminate string\n"));
         corfile_rm(csound, &incore);
         return FALSE;
       }
@@ -456,17 +508,17 @@ static int createOrchestra(CSOUND *csound, CORFIL *cf)
         goto nxt;
       }
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsInstruments>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsInstruments>\n"));
     corfile_rm(csound, &incore);
     return FALSE;
 }
 #else
-static int createOrchestra(CSOUND *csound, CORFIL *cf)
+static int32_t create_orchestra(CSOUND *csound, CORFIL *cf)
 {
     char  *p;
     CORFIL *incore = corfile_create_w(csound);
     char  buffer[CSD_MAX_LINE_LEN];
-    int comm = 0;
+    int32_t comm = 0;
 
     csound->orcLineOffset = STA(csdlinecount)+1;
     while (my_fgets_cf(csound, buffer, CSD_MAX_LINE_LEN, cf)!= NULL) {
@@ -479,8 +531,6 @@ static int createOrchestra(CSOUND *csound, CORFIL *cf)
 
       if (comm == 0 &&
           strstr(p, "</CsInstruments>") == p) {
-        //csound->Message(csound, "closing tag\n");
-        //corfile_flush(incore);
         corfile_puts(csound, "\n#exit\n", incore);
         corfile_putc(csound, '\0', incore);
         corfile_putc(csound, '\0', incore);
@@ -499,17 +549,17 @@ static int createOrchestra(CSOUND *csound, CORFIL *cf)
       else
         corfile_puts(csound, buffer, incore);
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsInstruments>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsInstruments>\n"));
     corfile_rm(csound, &incore);
     return FALSE;
 }
 #endif
 
-#if 1
-static int createScore(CSOUND *csound, CORFIL *cf)
+#if 0
+static int32_t create_score(CSOUND *csound, CORFIL *cf)
 {
     char   *p, *q;
-    int    state = 0;
+    int32_t    state = 0;
     char   buffer[CSD_MAX_LINE_LEN];
 
     if (csound->scorestr == NULL)
@@ -518,7 +568,7 @@ static int createScore(CSOUND *csound, CORFIL *cf)
     csound->scoLineOffset = STA(csdlinecount);
  nxt:
     while (my_fgets_cf(csound, buffer, CSD_MAX_LINE_LEN, cf)!= NULL) {
-      int c;
+      int32_t c;
       p = buffer;
       if (state == 0 &&
           (q = strstr(p, "</CsScore>")) &&
@@ -554,7 +604,7 @@ static int createScore(CSOUND *csound, CORFIL *cf)
           }
           else if (c=='"') { state =  0; goto top;}
         }
-        csoundErrorMsg(csound, Str("missing \" to terminate string"));
+        csoundErrorMsg(csound, Str("CsScore: missing \" to terminate string\n"));
         corfile_rm(csound, &csound->scorestr);
         return FALSE;
       }
@@ -570,11 +620,11 @@ static int createScore(CSOUND *csound, CORFIL *cf)
         goto nxt;
       }
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsScore>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsScore>\n"));
     return FALSE;
 }
 #else
-static int createScore(CSOUND *csound, CORFIL *cf)
+static int32_t create_score(CSOUND *csound, CORFIL *cf)
 {
     char   *p;
     char   buffer[CSD_MAX_LINE_LEN];
@@ -587,7 +637,7 @@ static int createScore(CSOUND *csound, CORFIL *cf)
       while (isblank(*p)) p++;
       if (strstr(p, "</CsScore>") == p) {
         //#ifdef SCORE_PARSER
-        corfile_puts(csound, "\n#exit\n", csound->scorestr);
+        corfile_puts(csound, "\ne\n#exit\n", csound->scorestr);
         corfile_putc(csound, '\0', csound->scorestr); /* For use in bison/flex */
         corfile_putc(csound, '\0', csound->scorestr); /* For use in bison/flex */
         //#endif
@@ -596,15 +646,15 @@ static int createScore(CSOUND *csound, CORFIL *cf)
       else
         corfile_puts(csound, buffer, csound->scorestr);
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsScore>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsScore>\n"));
     return FALSE;
 }
 #endif
 
-static int createExScore(CSOUND *csound, char *p, CORFIL *cf)
+static int32_t create_ex_score(CSOUND *csound, char *p, CORFIL *cf)
 {
 #ifdef IOS
-  csoundErrorMsg(csound, "External scores not supported on iOS");
+  csoundErrorMsg(csound, Str("External scores not supported on iOS"));
   return FALSE;
 #else
     char *extname;
@@ -628,9 +678,9 @@ static int createExScore(CSOUND *csound, char *p, CORFIL *cf)
     strNcpy(prog, p+5, 256); //prog[255]='\0';/* after "<CsExScore " */
     /* Generate score name */
     if (STA(sconame)) free(STA(sconame));
-    STA(sconame) = csoundTmpFileName(csound, ".sco");
-    extname = csoundTmpFileName(csound, ".ext");
-    fd = csoundFileOpenWithType(csound, &scof, CSFILE_STD, extname, "w", NULL,
+    STA(sconame) = tmp_file_name(csound, ".sco");
+    extname = tmp_file_name(csound, ".ext");
+    fd = csoundFileOpen(csound, &scof, CSFILE_STD, extname, "w", NULL,
                                 CSFTYPE_SCORE, 1);
     csound->tempStatus |= csScoInMask;
 #ifdef _DEBUG
@@ -646,12 +696,18 @@ static int createExScore(CSOUND *csound, char *p, CORFIL *cf)
       p = buffer;
       if (strstr(p, "</CsScore>") == p) {
         char sys[1024];
-        csoundFileClose(csound, fd);
+        csoundFileClose(csound, fd, CSFILE_CLOSE_SYNC);
         snprintf(sys, 1024, "%s %s %s", prog, extname, STA(sconame));
-        if (UNLIKELY(system(sys) != 0)) {
+#if defined(__wasi__) && !defined(CSOUND_WASI_BROWSER)
+        /* WASI Preview 1 has no process API. Do not report false success. */
+        int system_result = -1;
+#else
+        int system_result = system(sys);
+#endif
+        if (UNLIKELY(system_result != 0)) {
           csoundErrorMsg(csound, Str("External generation failed"));
-          if (UNLIKELY(remove(extname) || remove(STA(sconame))))
-            csoundErrorMsg(csound, Str("and cannot remove"));
+          remove(extname);
+          remove(STA(sconame));
           csound->Free(csound, extname);
           return FALSE;
         }
@@ -660,7 +716,7 @@ static int createExScore(CSOUND *csound, char *p, CORFIL *cf)
         if (csound->scorestr == NULL)
           csound->scorestr = corfile_create_w(csound);
 
-        fd = csoundFileOpenWithType(csound, &scof, CSFILE_STD, STA(sconame),
+        fd = csoundFileOpen(csound, &scof, CSFILE_STD, STA(sconame),
                                     "r", NULL, CSFTYPE_SCORE, 0);
         if (UNLIKELY(fd == NULL)) {
           csoundErrorMsg(csound, Str("cannot open %s"), STA(sconame));
@@ -673,7 +729,7 @@ static int createExScore(CSOUND *csound, char *p, CORFIL *cf)
         while (my_fgets(csound, buffer, CSD_MAX_LINE_LEN, scof)!= NULL)
           corfile_puts(csound, buffer, csound->scorestr);
         csoundMessage(csound, Str("closing %s\n"), STA(sconame));
-        csoundFileClose(csound, fd);
+        csoundFileClose(csound, fd, CSFILE_CLOSE_SYNC);
         if (UNLIKELY(remove(STA(sconame))))
           csoundErrorMsg(csound, Str("and cannot remove %s\n"), STA(sconame));
         corfile_puts(csound, "\n#exit\n", csound->scorestr);
@@ -693,8 +749,8 @@ static int createExScore(CSOUND *csound, char *p, CORFIL *cf)
 
 static void read_base64(CSOUND *csound, CORFIL *in, FILE *out)
 {
-    int c;
-    int n, nbits;
+    int32_t c;
+    int32_t n, nbits;
 
     n = nbits = 0;
     while ((c = corfile_getc(in)) != '=' && c != '<') {
@@ -717,9 +773,9 @@ static void read_base64(CSOUND *csound, CORFIL *in, FILE *out)
       if (isupper(c))
         c -= 'A';
       else if (islower(c))
-        c -= ((int) 'a' - 26);
+        c -= ((int32_t) 'a' - 26);
       else if (isdigit(c))
-        c -= ((int) '0' - 52);
+        c -= ((int32_t) '0' - 52);
       else if (c == '+')
         c = 62;
       else if (c == '/')
@@ -750,8 +806,8 @@ static void read_base64(CSOUND *csound, CORFIL *in, FILE *out)
 #ifdef JPFF
 static void read_base64_2cor(CSOUND *csound, CORFIL *in, CORFIL *out)
 {
-    int c;
-    int n, nbits;
+    int32_t c;
+    int32_t n, nbits;
 
     n = nbits = 0;
     while ((c = corfile_getc(in)) != '=' && c != '<') {
@@ -774,9 +830,9 @@ static void read_base64_2cor(CSOUND *csound, CORFIL *in, CORFIL *out)
       if (isupper(c))
         c -= 'A';
       else if (islower(c))
-        c -= ((int) 'a' - 26);
+        c -= ((int32_t) 'a' - 26);
       else if (isdigit(c))
-        c -= ((int) '0' - 52);
+        c -= ((int32_t) '0' - 52);
       else if (c == '+')
         c = 62;
       else if (c == '/')
@@ -806,7 +862,7 @@ static void read_base64_2cor(CSOUND *csound, CORFIL *in, CORFIL *out)
 }
 #endif
 
-static int createMIDI2(CSOUND *csound, CORFIL *cf)
+static int32_t create_MIDI2(CSOUND *csound, CORFIL *cf)
 {
     char  *p;
     FILE  *midf;
@@ -815,8 +871,8 @@ static int createMIDI2(CSOUND *csound, CORFIL *cf)
 
     /* Generate MIDI file name */
     if (STA(midname)) free(STA(midname));
-    STA(midname) = csoundTmpFileName(csound, ".mid");
-    fd = csoundFileOpenWithType(csound, &midf, CSFILE_STD, STA(midname),
+    STA(midname) = tmp_file_name(csound, ".mid");
+    fd = csoundFileOpen(csound, &midf, CSFILE_STD, STA(midname),
                                 "wb", NULL, CSFTYPE_STD_MIDI, 1);
     if (UNLIKELY(fd == NULL)) {
       csoundDie(csound, Str("Cannot open temporary file (%s) for MIDI subfile"),
@@ -824,7 +880,7 @@ static int createMIDI2(CSOUND *csound, CORFIL *cf)
     }
     csound->tempStatus |= csMidiScoMask;
     read_base64(csound, cf, midf);
-    csoundFileClose(csound, fd);
+    csoundFileClose(csound, fd, CSFILE_CLOSE_SYNC);
     add_tmpfile(csound, STA(midname));               /* IV - Feb 03 2005 */
     STA(midiSet) = TRUE;
     while (TRUE) {
@@ -836,13 +892,13 @@ static int createMIDI2(CSOUND *csound, CORFIL *cf)
         }
       }
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsMidifileB>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsMidifileB>\n"));
     return FALSE;
 }
 
-static int createSample(CSOUND *csound, char *buffer, CORFIL *cf)
+static int32_t create_sample(CSOUND *csound, char *buffer, CORFIL *cf)
 {
-    int   num;
+    int32_t   num;
     FILE  *smpf;
     void  *fd;
     char  sampname[256];
@@ -854,13 +910,13 @@ static int createSample(CSOUND *csound, char *buffer, CORFIL *cf)
       fclose(smpf);
       csoundDie(csound, Str("File %s already exists"), sampname);
     }
-    fd = csoundFileOpenWithType(csound, &smpf, CSFILE_STD, sampname, "wb", NULL,
+    fd = csoundFileOpen(csound, &smpf, CSFILE_STD, sampname, "wb", NULL,
                                 CSFTYPE_UNKNOWN_AUDIO, 1);
     if (UNLIKELY(fd == NULL)) {
       csoundDie(csound, Str("Cannot open sample file (%s) subfile"), sampname);
     }
     read_base64(csound, cf, smpf);
-    csoundFileClose(csound, fd);
+    csoundFileClose(csound, fd, CSFILE_CLOSE_SYNC);
     add_tmpfile(csound, sampname);              /* IV - Feb 03 2005 */
     while (TRUE) {
       if (my_fgets_cf(csound, buffer, CSD_MAX_LINE_LEN, cf)!= NULL) {
@@ -871,11 +927,11 @@ static int createSample(CSOUND *csound, char *buffer, CORFIL *cf)
         }
       }
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsSampleB>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsSampleB>\n"));
     return FALSE;
 }
 
-static int createFile(CSOUND *csound, char *buffer, CORFIL *cf)
+static int32_t create_file(CSOUND *csound, char *buffer, CORFIL *cf)
 {
     FILE  *smpf;
     void  *fd;
@@ -891,24 +947,18 @@ static int createFile(CSOUND *csound, char *buffer, CORFIL *cf)
     else
       q = strchr(p, '>');
     if (q) *q='\0';
-    //  printf("p=>>%s<<\n", p);
-    strNcpy(filename, p, 256); //filename[255]='\0';
-//sscanf(buffer, "<CsFileB filename=\"%s\">", filename);
-//    if (filename[0] != '\0' &&
-//       filename[strlen(filename) - 1] == '>' &&
-//       filename[strlen(filename) - 2] == '"')
-//    filename[strlen(filename) - 2] = '\0';
+    strNcpy(filename, p, 256);
     if (UNLIKELY((smpf = fopen(filename, "rb")) != NULL)) {
       fclose(smpf);
       csoundDie(csound, Str("File %s already exists"), filename);
     }
-    fd = csoundFileOpenWithType(csound, &smpf, CSFILE_STD, filename, "wb", NULL,
+    fd = csoundFileOpen(csound, &smpf, CSFILE_STD, filename, "wb", NULL,
                                 CSFTYPE_UNKNOWN, 1);
     if (UNLIKELY(fd == NULL)) {
       csoundDie(csound, Str("Cannot open file (%s) subfile"), filename);
     }
     read_base64(csound, cf, smpf);
-    csoundFileClose(csound, fd);
+    csoundFileClose(csound, fd, CSFILE_CLOSE_SYNC);
     add_tmpfile(csound, filename);              /* IV - Feb 03 2005 */
 
     while (TRUE) {
@@ -920,12 +970,12 @@ static int createFile(CSOUND *csound, char *buffer, CORFIL *cf)
         }
       }
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsFileB>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsFileB>\n"));
     return FALSE;
 }
 
 #ifdef JPFF
-static int createCorfile(CSOUND *csound, char *buffer, CORFIL *cf)
+static int32_t create_corfile(CSOUND *csound, char *buffer, CORFIL *cf)
 {
     CORFIL  *smpf;
     char  filename[256];
@@ -961,19 +1011,19 @@ static int createCorfile(CSOUND *csound, char *buffer, CORFIL *cf)
         }
       }
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsFileC>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsFileC>\n"));
     return FALSE;
 }
 #endif
 
-static int createFilea(CSOUND *csound, char *buffer, CORFIL *cf)
+static int32_t create_filea(CSOUND *csound, char *buffer, CORFIL *cf)
 {
     FILE  *smpf;
     void  *fd;
     char  filename[256];
     char  buff[1024];
     char *p = buffer, *q;
-    int res=FALSE;
+    int32_t res=FALSE;
 
     filename[0] = '\0';
 
@@ -990,7 +1040,7 @@ static int createFilea(CSOUND *csound, char *buffer, CORFIL *cf)
       fclose(smpf);
       csoundDie(csound, Str("File %s already exists"), filename);
     }
-    fd = csoundFileOpenWithType(csound, &smpf, CSFILE_STD, filename, "w", NULL,
+    fd = csoundFileOpen(csound, &smpf, CSFILE_STD, filename, "w", NULL,
                                 CSFTYPE_UNKNOWN, 1);
     if (UNLIKELY(fd == NULL)) {
       csoundDie(csound, Str("Cannot open file (%s) subfile"), filename);
@@ -1004,18 +1054,18 @@ static int createFilea(CSOUND *csound, char *buffer, CORFIL *cf)
       fputs(buff, smpf);
     }
     if (UNLIKELY(res==FALSE))
-      csoundErrorMsg(csound, Str("Missing end tag </CsFile>"));
-    csoundFileClose(csound, fd);
+      csoundErrorMsg(csound, Str("Missing end tag </CsFile>\n"));
+    csoundFileClose(csound, fd, CSFILE_CLOSE_SYNC);
     add_tmpfile(csound, filename);              /* IV - Feb 03 2005 */
     return res;
 }
 
-static int checkVersion(CSOUND *csound, CORFIL *cf)
+static int32_t check_version(CSOUND *csound, CORFIL *cf)
 {
     char  *p;
-    int   major = 0, minor = 0;
-    int   result = TRUE;
-    int   version = csoundGetVersion();
+    int32_t   major = 0, minor = 0;
+    int32_t   result = TRUE;
+    int32_t   version = csoundGetVersion();
     char  buffer[CSD_MAX_LINE_LEN];
 
     while (my_fgets_cf(csound, buffer, CSD_MAX_LINE_LEN, cf) != NULL) {
@@ -1055,14 +1105,14 @@ static int checkVersion(CSOUND *csound, CORFIL *cf)
         }
       }
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsVersion>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsVersion>\n"));
     return FALSE;
 }
 
-static int checkLicence(CSOUND *csound, CORFIL *cf)
+static int32_t check_licence(CSOUND *csound, CORFIL *cf)
 {
     char  *p, *licence;
-    int   len = 1;
+    int32_t   len = 1;
     char  buffer[CSD_MAX_LINE_LEN];
 
     csoundMessage(csound, Str("**** Licence Information ****\n"));
@@ -1082,13 +1132,13 @@ static int checkLicence(CSOUND *csound, CORFIL *cf)
       strlcat(licence, p, len);
     }
     csound->Free(csound, licence);
-    csoundErrorMsg(csound, Str("Missing end tag </CsLicence>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsLicence>\n"));
     return FALSE;
 }
 
-static int checkShortLicence(CSOUND *csound, CORFIL *cf)
+static int32_t check_short_licence(CSOUND *csound, CORFIL *cf)
 {
-    int   type = 0;
+    int32_t   type = 0;
     char  buff[CSD_MAX_LINE_LEN];
 
     csoundMessage(csound, Str("**** Licence Information ****\n"));
@@ -1100,16 +1150,16 @@ static int checkShortLicence(CSOUND *csound, CORFIL *cf)
       }
       type = atoi(buff);
     }
-    csoundErrorMsg(csound, Str("Missing end tag </CsShortLicence>"));
+    csoundErrorMsg(csound, Str("Missing end tag </CsShortLicence>\n"));
     return FALSE;
 }
 
-int read_unified_file4(CSOUND *csound, CORFIL *cf)
+int32_t read_unified_file4(CSOUND *csound, CORFIL *cf)
 {
-    int   result = TRUE;
-    int   r;
-    int started = FALSE;
-    int notrunning = csound->engineStatus & CS_STATE_COMP;
+    int32_t   result = TRUE;
+    int32_t   r;
+    int32_t started = FALSE;
+    int32_t notrunning = csound->engineStatus & CS_STATE_COMP;
     char    buffer[CSD_MAX_LINE_LEN];
 #ifdef _DEBUG
     //csoundMessage(csound, "Calling unified file system4\n");
@@ -1144,7 +1194,7 @@ int read_unified_file4(CSOUND *csound, CORFIL *cf)
           if(csound->oparms->odebug)
           csoundMessage(csound, Str("Creating options\n"));
           csound->orchname = NULL;  /* allow orchestra/score name in CSD file */
-          r = readOptions(csound, cf, 1);
+          r = read_options(csound, cf, 1);
           result = r && result;
         }
         else {
@@ -1152,7 +1202,7 @@ int read_unified_file4(CSOUND *csound, CORFIL *cf)
           do {
             if (UNLIKELY(my_fgets_cf(csound, buffer,
                                    CSD_MAX_LINE_LEN, cf) == NULL)) {
-              csoundErrorMsg(csound, Str("Missing end tag </CsOptions>"));
+              csoundErrorMsg(csound, Str("Missing end tag </CsOptions>\n"));
               result = FALSE;
               break;
             }
@@ -1164,21 +1214,21 @@ int read_unified_file4(CSOUND *csound, CORFIL *cf)
       else if (strstr(p, "<CsInstruments>") == p) {
         if(csound->oparms->odebug)
          csoundMessage(csound, Str("Creating orchestra\n"));
-        r = createOrchestra(csound, cf);
+        r = create_orchestra(csound, cf);
         result = r && result;
       }
       else if (strstr(p, "<CsScore") == p) {
         if(csound->oparms->odebug)
          csoundMessage(csound, Str("Creating score\n"));
         if (strstr(p, "<CsScore>") == p)
-          r = createScore(csound, cf);
+          r = create_score(csound, cf);
         else
-          r = createExScore(csound, p, cf);
+          r = create_ex_score(csound, p, cf);
         result = r && result;
       }
       else if (strstr(p, "<CsMidifileB>") == p) {
         if (notrunning) {
-          r = createMIDI2(csound, cf);
+          r = create_MIDI2(csound, cf);
           result = r && result;
         }
         else {
@@ -1186,7 +1236,7 @@ int read_unified_file4(CSOUND *csound, CORFIL *cf)
           do {
             if (UNLIKELY(my_fgets_cf(csound, buffer,
                                    CSD_MAX_LINE_LEN, cf) == NULL)) {
-              csoundErrorMsg(csound, Str("Missing end tag </CsMidiFileB>"));
+              csoundErrorMsg(csound, Str("Missing end tag </CsMidiFileB>\n"));
               result = FALSE;
               break;
             }
@@ -1196,42 +1246,42 @@ int read_unified_file4(CSOUND *csound, CORFIL *cf)
         }
       }
       else if (strstr(p, "<CsSampleB filename=") == p) {
-        r = createSample(csound, buffer, cf);
+        r = create_sample(csound, buffer, cf);
         result = r && result;
       }
       else if (strstr(p, "<CsFileB filename=") == p) {
-        r = createFile(csound, buffer, cf);
+        r = create_file(csound, buffer, cf);
         result = r && result;
       }
 #ifdef JPFF
       else if (strstr(p, "<CsFileC filename=") == p) {
-        r = createCorfile(csound, buffer, cf);
+        r = create_corfile(csound, buffer, cf);
         result = r && result;
       }
 #endif
       else if (strstr(p, "<CsFile filename=") == p) {
         csoundMessage(csound,
                       Str("CsFile is deprecated and may not work; use CsFileB\n"));
-        r = createFilea(csound, buffer, cf);
+        r = create_filea(csound, buffer, cf);
         result = r && result;
       }
       else if (strstr(p, "<CsVersion>") == p) {
-        r = checkVersion(csound, cf);
+        r = check_version(csound, cf);
         result = r && result;
       }
       else if (strstr(p, "<CsLicence>") == p ||
                strstr(p, "<CsLicense>") == p) {
-        r = checkLicence(csound, cf);
+        r = check_licence(csound, cf);
         result = r && result;
       }
       else if (strstr(p, "<CsShortLicence>") == p ||
                strstr(p, "<CsSortLicense>") == p) {
-        r = checkShortLicence(csound, cf);
+        r = check_short_licence(csound, cf);
         result = r && result;
       }
-      else if (blank_buffer(/*csound,*/ buffer)) continue;
+      else if (blank_buffer(buffer)) continue;
       else if (started && strchr(p, '<') == buffer){
-        csoundMessage(csound, Str("unknown CSD tag: %s\n"), buffer);
+         csoundMessage(csound, Str("unknown CSD tag: %s"), buffer);
       }
     }
     if (UNLIKELY(!started)) {

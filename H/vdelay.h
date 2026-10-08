@@ -17,17 +17,18 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*      vdelay, multitap, reverb2 coded by Paris Smaragdis              */
 /*      Berklee College of Music Csound development team                */
 /*      Copyright (c) December 1994.  All rights reserved               */
 
+#pragma once
+
 typedef struct {
         OPDS    h;
-        MYFLT   *sr, *ain, *adel, *imaxd, *istod;
+        cs_float   *sr, *ain, *adel, *imaxd, *istod;
         uint32 maxd;
         AUXCH   aux;
         int32   left;
@@ -35,36 +36,36 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *sr1, *sr2, *sr3, *sr4;
-        MYFLT   *ain1, *ain2, *ain3, *ain4, *adel, *imaxd, *iquality, *istod;
+        cs_float   *sr1, *sr2, *sr3, *sr4;
+        cs_float   *ain1, *ain2, *ain3, *ain4, *adel, *imaxd, *iquality, *istod;
         AUXCH   aux1, aux2, aux3, aux4;
         uint32 maxd;
-        int     interp_size;
+        int32_t     interp_size;
         int32   left;
 } VDELXQ;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *sr1, *sr2, *ain1, *ain2, *adel, *imaxd, *iquality, *istod;
+        cs_float   *sr1, *sr2, *ain1, *ain2, *adel, *imaxd, *iquality, *istod;
         AUXCH   aux1, aux2;
         uint32 maxd;
-        int     interp_size;
+        int32_t     interp_size;
         int32   left;
 } VDELXS;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *sr1, *ain1, *adel, *imaxd, *iquality, *istod;
+        cs_float   *sr1, *ain1, *adel, *imaxd, *iquality, *istod;
         AUXCH   aux1;
         uint32 maxd;
-        int     interp_size;
+        int32_t     interp_size;
         int32   left;
 } VDELX;
 
 typedef struct {
         OPDS    h;
-        MYFLT   *sr, *ain, *ndel[VARGMAX-1];
-        AUXCH   aux;
+        cs_float   *sr, *ain, *ndel[VARGMAX-1];
+        AUXCH   aux, tapdel;
         int32   left, max;
 } MDEL;
 
@@ -75,26 +76,26 @@ typedef struct {
 
 typedef struct {
         OPDS    h;
-        MYFLT   *out, *in, *time, *hdif, *istor;
-        MYFLT   *cbuf_cur[Combs], *abuf_cur[Alpas];
-        MYFLT   c_time[Combs], c_gain[Combs], a_time[Alpas], a_gain[Alpas];
-        MYFLT   z[Combs], g[Combs];
+        cs_float   *out, *in, *time, *hdif, *istor;
+        cs_float   *cbuf_cur[Combs], *abuf_cur[Alpas];
+        cs_float   c_time[Combs], c_gain[Combs], a_time[Alpas], a_gain[Alpas];
+        cs_float   z[Combs], g[Combs];
         AUXCH   temp;
         AUXCH   caux[Combs], aaux[Alpas];
-        MYFLT   prev_time, prev_hdif;
+        cs_float   prev_time, prev_hdif;
 } STVB;
 
 /*      nreverb coded by Paris Smaragdis 1994 and Richard Karpen 1998 */
 
 typedef struct {
         OPDS    h;
-        MYFLT   *out, *in, *time, *hdif, *istor;
-        MYFLT   *cbuf_cur[Combs], *abuf_cur[Alpas];
-        MYFLT   c_time[Combs], c_gain[Combs], a_time[Alpas], a_gain[Alpas];
-        MYFLT   z[Combs], g[Combs];
+        cs_float   *out, *in, *time, *hdif, *istor;
+        cs_float   *cbuf_cur[Combs], *abuf_cur[Alpas];
+        cs_float   c_time[Combs], c_gain[Combs], a_time[Alpas], a_gain[Alpas];
+        cs_float   z[Combs], g[Combs];
         AUXCH   temp;
         AUXCH   caux[Combs], aaux[Alpas];
-        MYFLT   prev_time, prev_hdif;
+        cs_float   prev_time, prev_hdif;
 } NREV;
 
 #endif
@@ -107,39 +108,39 @@ typedef struct {
  */
 typedef struct {
         OPDS    h;
-        MYFLT   *out, *in, *time, *hdif, *istor;
-        MYFLT   *inumCombs, *ifnCombs, *inumAlpas, *ifnAlpas;
+        cs_float   *out, *in, *time, *hdif, *istor;
+        cs_float   *inumCombs, *ifnCombs, *inumAlpas, *ifnAlpas;
         /* Used to be [Combs]- and [Alpas]-sized arrays */
-        int     numCombs, numAlpas;
-        MYFLT   **cbuf_cur, **abuf_cur;
-        MYFLT   **pcbuf_cur, **pabuf_cur;
-        MYFLT   *c_time, *c_gain, *a_time, *a_gain;
-        const MYFLT *c_orggains, *a_orggains;
-        MYFLT   *z, *g;        /* [Combs] */
+        int32_t     numCombs, numAlpas, initialized;
+        cs_float   **cbuf_cur, **abuf_cur;
+        cs_float   **pcbuf_cur, **pabuf_cur;
+        cs_float   *c_time, *c_gain, *a_time, *a_gain;
+        cs_float   *c_orggains, *a_orggains;
+        cs_float   *z, *g;        /* [Combs] */
         AUXCH   temp;
         AUXCH   caux, aaux;
         AUXCH   caux2, aaux2;  /* Used to hold space for all dynamized arrays */
-        MYFLT   prev_time, prev_hdif;
+        cs_float   prev_time, prev_hdif;
 } NREV2;
 
-int vdelset(CSOUND *, VDEL *p);
-int vdelay(CSOUND *, VDEL *p);
-int vdelay3(CSOUND *, VDEL *p);
-int vdelxset(CSOUND *, VDELX *p);
-int vdelxsset(CSOUND *, VDELXS *p);
-int vdelxqset(CSOUND *, VDELXQ *p);
-int vdelayx(CSOUND *, VDELX *p);
-int vdelayxw(CSOUND *, VDELX *p);
-int vdelayxs(CSOUND *, VDELXS *p);
-int vdelayxws(CSOUND *, VDELXS *p);
-int vdelayxq(CSOUND *, VDELXQ *p);
-int vdelayxwq(CSOUND *, VDELXQ *p);
-int multitap_set(CSOUND *, MDEL *p);
-int multitap_play(CSOUND *, MDEL *p);
+int32_t vdelset(CSOUND *, VDEL *p);
+int32_t vdelay(CSOUND *, VDEL *p);
+int32_t vdelay3(CSOUND *, VDEL *p);
+int32_t vdelxset(CSOUND *, VDELX *p);
+int32_t vdelxsset(CSOUND *, VDELXS *p);
+int32_t vdelxqset(CSOUND *, VDELXQ *p);
+int32_t vdelayx(CSOUND *, VDELX *p);
+int32_t vdelayxw(CSOUND *, VDELX *p);
+int32_t vdelayxs(CSOUND *, VDELXS *p);
+int32_t vdelayxws(CSOUND *, VDELXS *p);
+int32_t vdelayxq(CSOUND *, VDELXQ *p);
+int32_t vdelayxwq(CSOUND *, VDELXQ *p);
+int32_t multitap_set(CSOUND *, MDEL *p);
+int32_t multitap_play(CSOUND *, MDEL *p);
 #if 0
-int nreverb_set(CSOUND *, NREV *p);
-int nreverb(CSOUND *, NREV *p);
+int32_t nreverb_set(CSOUND *, NREV *p);
+int32_t nreverb(CSOUND *, NREV *p);
 #endif
-int reverbx_set(CSOUND *, NREV2 *p);
-int reverbx(CSOUND *, NREV2 *p);
+int32_t reverbx_set(CSOUND *, NREV2 *p);
+int32_t reverbx(CSOUND *, NREV2 *p);
 

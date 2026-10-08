@@ -1,3 +1,9 @@
+<CsTest>
+description = "test k-array with single dimension, assignment to expression value"
+
+[expect]
+exit = 0
+</CsTest>
 <CsoundSynthesizer>
 
 <CsInstruments>
@@ -14,9 +20,7 @@ kArr[] init 4
 kcounter = 0
 
 until (kcounter >= 4) do
-
 kArr[kcounter] = kcounter ^ 2
-
 kcounter = kcounter + 1
 od
 

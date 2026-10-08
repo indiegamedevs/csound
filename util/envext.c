@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 /*******************************************************\
@@ -43,7 +42,7 @@
 /* Static function prototypes */
 
 static SNDFILE * SCsndgetset(CSOUND *, SOUNDIN **, char *);
-static void FindEnvelope(CSOUND *, SNDFILE *, SOUNDIN *, double, char *);
+static void FindEnvelope(CSOUND *, SNDFILE *, SOUNDIN *, cs_double, char *);
 
 static void envext_usage(CSOUND *csound, char *mesg, ...)
 {
@@ -65,12 +64,9 @@ static int32_t envext(CSOUND *csound, int32_t argc, char **argv)
     char        *inputfile = NULL;
     SNDFILE     *infd;
     char        c, *s;
-    OPARMS      OO;
-    double      window = 0.25;
+    cs_double      window = 0.25;
     SOUNDIN     *p;  /* space allocated by SAsndgetset() */
     char        *outname = NULL;
-
-    memset(&OO, 0, sizeof(OO));
 
     /* Check arguments */
     if (UNLIKELY(!(--argc)))
@@ -113,18 +109,18 @@ static SNDFILE *
 SCsndgetset(CSOUND *csound, SOUNDIN **pp, char *inputfile)
 {
     SNDFILE *infd;
-    double  dur;
+    cs_double  dur;
     SOUNDIN *p;
 
-    csound->SetUtilSr(csound, FL(0.0));      /* set esr 0. with no orchestra   */
+    (csound->GetUtility(csound))->SetUtilSr(csound, FL(0.0));      /* set esr 0. with no orchestra   */
     *pp = p = (SOUNDIN *) csound->Calloc(csound, sizeof(SOUNDIN));
     p->channel = ALLCHNLS;
     p->skiptime = FL(0.0);
     strNcpy(p->sfname, inputfile, MAXSNDNAME-1);
-    if ((infd = csound->sndgetset(csound, p)) == 0) /*open sndfil, do skiptime*/
+    if ((infd = (csound->GetUtility(csound))->SndinGetSet(csound, p)) == 0) /*open sndfil, do skiptime*/
       return(0);
     p->getframes = p->framesrem;
-    dur = (double) p->getframes / p->sr;
+    dur = (cs_double) p->getframes / p->sr;
     csound->Message(csound,Str("enveloping %"PRId64" sample frames (%3.1f secs)\n"),
            (int64_t) p->getframes, dur);
     return(infd);
@@ -132,38 +128,38 @@ SCsndgetset(CSOUND *csound, SOUNDIN **pp, char *inputfile)
 
 static void
 FindEnvelope(CSOUND *csound, SNDFILE *infd, SOUNDIN *p,
-             double window, char *outname)
+             cs_double window, char *outname)
 {
-    double      tpersample;
-    double      max, min;
+    cs_double      tpersample;
+    cs_double      max, min;
     int64_t     mxpos, minpos;
     int32_t     block = 0;
-    MYFLT       *buffer;
+    cs_float       *buffer;
     int32_t     bufferlen;
     int64_t     read_in;
     int32_t     i;
     FILE *      outfile;
 
     outfile = fopen((outname == NULL ? "newenv" : outname), "w");
-    bufferlen = (int32_t)(window*(double)p->sr);
-    buffer = (MYFLT*) malloc(bufferlen*sizeof(MYFLT));
-    tpersample = 1.0/(double)p->sr;
+    bufferlen = (int32_t)(window*(cs_double)p->sr);
+    buffer = (cs_float*) malloc(bufferlen*sizeof(cs_float));
+    tpersample = 1.0/(cs_double)p->sr;
     fprintf(outfile, "%.3f\t%.3f\n", 0.0, 0.0);
-    while ((read_in = csound->getsndin(csound,infd,buffer,bufferlen,p)) > 0) {
+    while ((read_in = (csound->GetUtility(csound))->Sndin(csound,infd,buffer,bufferlen,p)) > 0) {
       max = 0.0;        mxpos = 0;
       min = 0.0;        minpos = 0;
       for (i=0; i<read_in; i++) {
-        if ((double)buffer[i] > max)
-          max = (double)buffer[i], mxpos = i;
-        if ((double)buffer[i] < min)
-          min = (double)buffer[i], minpos = i;
+        if ((cs_double)buffer[i] > max)
+          max = (cs_double)buffer[i], mxpos = i;
+        if ((cs_double)buffer[i] < min)
+          min = (cs_double)buffer[i], minpos = i;
       }
       if (-min > max) max = -min, mxpos = minpos;
       fprintf(outfile, "%.3f\t%.3f\n",
-              block*window+(double)mxpos*tpersample, max/SHORTMAX);
+              block*window+(cs_double)mxpos*tpersample, max/SHORTMAX);
       block++;
     }
-    sf_close(infd);
+    csound->SndfileClose(csound,infd);
     fclose(outfile);
 }
 
@@ -171,10 +167,10 @@ FindEnvelope(CSOUND *csound, SNDFILE *infd, SOUNDIN *p,
 
 int32_t envext_init_(CSOUND *csound)
 {
-    int32_t retval = csound->AddUtility(csound, "envext", envext);
+    int32_t retval = (csound->GetUtility(csound))->AddUtility(csound, "envext", envext);
     if (!retval) {
       retval =
-        csound->SetUtilityDescription(csound, "envext",
+        (csound->GetUtility(csound))->SetUtilityDescription(csound, "envext",
                                       Str("Create a text file of envelope"));
     }
     return retval;

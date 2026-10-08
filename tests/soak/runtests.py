@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 import os
 import sys
@@ -1027,6 +1027,7 @@ testFiles = [
 "zkwm",
 ]
 
+
 if(len(sys.argv) > 1):
     for arg in sys.argv:
         if (arg == "--help"):
@@ -1042,6 +1043,7 @@ if(len(sys.argv) > 1):
             print("source dir = " + source_dir)
 
 print("Using Csound Command: " + csound)
+
 
 try:
     os.remove("Old_Output")

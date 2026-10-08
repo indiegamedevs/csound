@@ -17,8 +17,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include <stdio.h>
@@ -27,17 +26,15 @@
 #include "csoundCore.h"
 #include "csound_orc.h"
 #include "tok.h"
-
 #include "cs_par_base.h"
 #include "cs_par_orc_semantics.h"
-
 #include "interlocks.h"
+#include "find_opcode.h"
 
-OENTRY* find_opcode(CSOUND *, char *);
 /***********************************************************************
  * static function prototypes
  */
-/* static int csp_thread_index_get(CSOUND *csound); */
+/* static int32_t csp_thread_index_get(CSOUND *csound); */
 static INSTR_SEMANTICS *instr_semantics_alloc(CSOUND *csound, char *name);
 
 /***********************************************************************
@@ -62,49 +59,11 @@ static INSTR_SEMANTICS *instr_semantics_alloc(CSOUND *csound, char *name)
     return instr;
 }
 
-/***********************************************************************
- * parse time support
- */
-
-//static INSTR_SEMANTICS *curr;
-//static INSTR_SEMANTICS *root;
-
-/* void csp_orc_sa_cleanup(CSOUND *csound) */
-/* { */
-/*     INSTR_SEMANTICS *current = csound-> instRoot, *h = NULL; */
-/*     csp_orc_sa_print_list(csound); */
-/*     while (current != NULL) { */
-
-/*       csp_set_dealloc(csound, &(current->read)); */
-/*       csp_set_dealloc(csound, &(current->write)); */
-/*       csp_set_dealloc(csound, &(current->read_write)); */
-
-/*       h = current; */
-/*       current = current->next; */
-/*       csound->Free(csound, h); */
-/*     } */
-/*     current = csound->instCurr; */
-/*     while (current != NULL) { */
-
-/*       csp_set_dealloc(csound, &(current->read)); */
-/*       csp_set_dealloc(csound, &(current->write)); */
-/*       csp_set_dealloc(csound, &(current->read_write)); */
-
-/*       h = current; */
-/*       current = current->next; */
-/*       csound->Free(csound, h); */
-/*     } */
-
-/*     csound->instCurr = NULL; */
-/*     csound->instRoot = NULL; */
-/* } */
-
-
 static void sanitise_set(CSOUND *csound, struct set_t* p)
 {
     struct set_element_t *ele = p->head;
     while (ele != NULL) {
-      ele->data = cs_strdup(csound, (char*)ele->data);
+      ele->data = csoundStrdup(csound, (char*)ele->data);
       ele = ele->next;
     }
 }
@@ -238,7 +197,7 @@ void csp_orc_sa_global_read_add_list(CSOUND *csound, struct set_t *set)
     }
 }
 
-static void csp_orc_sa_interlocksf(CSOUND *csound, int code, char *name)
+static void csp_orc_sa_interlocksf(CSOUND *csound, int32_t code, char *name)
 {
     if (code&0xfff8) {
       /* zak etc */
@@ -256,11 +215,7 @@ static void csp_orc_sa_interlocksf(CSOUND *csound, int code, char *name)
       if (code&IR) csp_set_add(csound, rr, "##int");
       if (code&IW) csp_set_add(csound, ww, "##int");
       csp_orc_sa_global_read_write_add_list(csound, ww, rr);
-      //      printf("code&qq=%4x msglevel = %4x bit=%4x\n",
-      //   code&_QQ, csound->oparms_.msglevel, csound->oparms_.msglevel&CS_NOQQ );
-      if (UNLIKELY((code&_QQ) && !(csound->oparms_.msglevel&CS_NOQQ))) {
-        csound->Message(csound, Str("opcode %s deprecated\n"), name);
-      }
+      /* Deprecation is reported once, after resolving the opcode overload. */
     }
 }
 
@@ -271,11 +226,11 @@ void csp_orc_sa_interlocks(CSOUND *csound, ORCTOKEN *opcode)
     csp_orc_sa_interlocksf(csound, ep->flags, name);
 }
 
-//static int inInstr = 0;
+//static int32_t inInstr = 0;
 
 void csp_orc_sa_instr_add(CSOUND *csound, char *name)
 {
-    name = cs_strdup(csound, name); // JPff:  leaks: necessary?? Think it is correct
+    name = csoundStrdup(csound, name); // JPff:  leaks: necessary?? Think it is correct
     //printf("csp_orc_sa_instr_add name=%s\n", name);
     csound->inInstr = 1;
     if (csound->instRoot == NULL) {
@@ -314,10 +269,15 @@ void csp_orc_sa_instr_add_tree(CSOUND *csound, TREE *x)
         csp_orc_sa_instr_add(csound, x->value->lexeme);
         return;
       }
-      if (UNLIKELY(x->type != T_INSTLIST)) {
-        csound->DebugMsg(csound,"type %d not T_INSTLIST\n", x->type);
-        csound->Die(csound, Str("Not a proper list of ints"));
+     if (x->type == T_PLUS_IDENT) {
+        csp_orc_sa_instr_add(csound, x->value->lexeme);
+        return;
       }
+      
+//      if (UNLIKELY(x->type != T_INSTLIST)) {
+//        csound->DebugMsg(csound,"type %d not T_INSTLIST\n", x->type);
+//        csound->Die(csound, Str("Not a proper list of ints"));
+//      }
       csp_orc_sa_instr_add(csound, x->left->value->lexeme);
       x = x->right;
     }

@@ -20,8 +20,7 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
 
 #include <stdio.h>
@@ -31,17 +30,18 @@
 #include "csoundCore.h"
 #include "score_param.h"
 #include "csound_scoparse.h"
+  
 
-#define YYSTYPE MYFLT
+#define YYSTYPE cs_float
 #define YYLTYPE SCOTOKEN
 #define YY_DECL int yylex (YYLTYPE *lvalp, CSOUND *csound, yyscan_t yyscanner)
 #include "corfile.h"
+#include "files.h"
 YYLTYPE *yylval_param;
 YYLTYPE *yylloc_param;
 static  SCOTOKEN *make_string(CSOUND *, char *);
 static  SCOTOKEN *make_int(CSOUND *, int);
-static  SCOTOKEN *make_num(CSOUND *, double);
-extern  void *fopen_path(CSOUND *, FILE **, char *, char *, char *, int);
+static  SCOTOKEN *make_num(CSOUND *, cs_double);
 
 #define YY_EXTRA_TYPE  SCORE_PARM *
 #define PARM    yyget_extra(yyscanner)
@@ -190,11 +190,11 @@ static SCOTOKEN *make_int(CSOUND *csound, int i)
     return ans;
 }
 
-static SCOTOKEN *make_num(CSOUND *csound, double f)
+static SCOTOKEN *make_num(CSOUND *csound, cs_double f)
 {
     SCOTOKEN *ans = (SCOTOKEN*)mcalloc(csound, sizeof(SCOTOKEN));
     ans->type = NUMBER_TOKEN;
-    ans->fval = (MYFLT)f;
+    ans->fval = (cs_float)f;
     return ans;
 }
 

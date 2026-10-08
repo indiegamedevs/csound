@@ -17,18 +17,19 @@
 
     You should have received a copy of the GNU Lesser General Public
     License along with Csound; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
-    02110-1301 USA
+    Foundation, Inc., 31 Milk Street, #960789, Boston, MA, 02196, USA
 */
+
+#pragma once
 
 typedef struct {
   int32_t    cnt, wsize, flag; /* , section; */
-        MYFLT  ampincr, ampphs, offset;
+        cs_float  ampincr, ampphs, offset;
 } WARPSECTION;
 
 typedef struct {
     OPDS    h;
-    MYFLT   *r1, *r2, *xamp, *xtimewarp, *xresample, *isampfun, *ibegin,
+    cs_float   *r1, *r2, *xamp, *xtimewarp, *xresample, *isampfun, *ibegin,
             *iwsize, *irandw, *ioverlap, *ifn, *itimemode;
     FUNC    *ftpWind, *ftpSamp;
     int32   maxFr, prFlg, flen, sampflen, nsections;
@@ -40,7 +41,7 @@ typedef struct {
 
 typedef struct {
     OPDS    h;
-    MYFLT   *r1, *r2, *r3, *r4, *xamp, *xtimewarp, *xresample, *isampfun,
+    cs_float   *r1, *r2, *r3, *r4, *xamp, *xtimewarp, *xresample, *isampfun,
             *ibegin, *iwsize, *irandw, *ioverlap, *ifn, *itimemode;
     FUNC    *ftpWind,  *ftpSamp;
     int32   maxFr, prFlg, flen, sampflen, nsections;
